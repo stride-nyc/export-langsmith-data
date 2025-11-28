@@ -1,0 +1,12 @@
+# LangSmith Data Export Script - Dependencies
+
+# Core dependencies
+langsmith>=0.1.0
+
+# Optional dependencies
+tqdm>=4.66.0  # Progress bar for long exports
+python-dotenv>=1.0.0  # Environment variable management
+
+# Testing dependencies
+pytest>=8.0.0
+pytest-mock>=3.12.0
