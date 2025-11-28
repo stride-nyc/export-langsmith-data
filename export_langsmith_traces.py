@@ -27,15 +27,23 @@ from typing import Any, Dict, List, Optional
 from langsmith import Client
 
 
+class AuthenticationError(Exception):
+    """Raised when LangSmith API authentication fails."""
+    pass
+
+
 class LangSmithExporter:
     """Handles LangSmith trace data export with rate limiting and error handling."""
+
+    # API constants
+    DEFAULT_API_URL = "https://api.smith.langchain.com"
 
     # Rate limiting constants
     MAX_RETRIES = 5
     INITIAL_BACKOFF = 1.0  # seconds
     BACKOFF_MULTIPLIER = 2.0
 
-    def __init__(self, api_key: str, api_url: str = "https://api.smith.langchain.com") -> None:
+    def __init__(self, api_key: str, api_url: str = DEFAULT_API_URL) -> None:
         """
         Initialize LangSmith client.
 
@@ -46,7 +54,16 @@ class LangSmithExporter:
         Raises:
             AuthenticationError: If API key is invalid
         """
-        pass
+        self.api_key = api_key
+        self.api_url = api_url
+
+        try:
+            self.client = Client(api_key=api_key, api_url=api_url)
+        except Exception as e:
+            raise AuthenticationError(
+                f"Failed to authenticate with LangSmith API. "
+                f"Please verify your API key is valid. Error: {str(e)}"
+            ) from e
 
     def fetch_runs(self, project_name: str, limit: int) -> List[Any]:
         """

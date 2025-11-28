@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch, mock_open
 from export_langsmith_traces import (
     LangSmithExporter,
     parse_arguments,
+    AuthenticationError,
 )
 
 
@@ -74,13 +75,36 @@ class TestArgumentParsing:
 class TestLangSmithExporter:
     """Test LangSmithExporter class methods."""
 
-    def test_client_init_success(self):
+    @patch('export_langsmith_traces.Client')
+    def test_client_init_success(self, mock_client_class):
         """Test successful client initialization with valid API key."""
-        pass
+        # Arrange
+        mock_client_instance = Mock()
+        mock_client_class.return_value = mock_client_instance
+        api_key = "lsv2_pt_test_key"
+        api_url = "https://api.smith.langchain.com"
 
-    def test_client_init_auth_error(self):
+        # Act
+        exporter = LangSmithExporter(api_key=api_key, api_url=api_url)
+
+        # Assert
+        mock_client_class.assert_called_once_with(api_key=api_key, api_url=api_url)
+        assert exporter.client == mock_client_instance
+        assert exporter.api_key == api_key
+        assert exporter.api_url == api_url
+
+    @patch('export_langsmith_traces.Client')
+    def test_client_init_auth_error(self, mock_client_class):
         """Test authentication error handling."""
-        pass
+        # Arrange - Mock Client to raise an authentication error
+        mock_client_class.side_effect = Exception("Invalid API key")
+        api_key = "invalid_key"
+
+        # Act & Assert - should raise AuthenticationError
+        with pytest.raises(AuthenticationError) as exc_info:
+            LangSmithExporter(api_key=api_key)
+
+        assert "authentication" in str(exc_info.value).lower() or "api key" in str(exc_info.value).lower()
 
     def test_fetch_runs_success(self):
         """Test successful run fetching."""
