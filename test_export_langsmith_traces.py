@@ -405,17 +405,65 @@ class TestLangSmithExporter:
 class TestErrorHandling:
     """Test error scenarios."""
 
-    def test_project_not_found(self):
+    @patch("export_langsmith_traces.Client")
+    def test_project_not_found(self, mock_client_class):
         """Test project not found error."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
 
-    def test_network_timeout(self):
+        # Mock list_runs to raise an error indicating project not found
+        mock_client.list_runs.side_effect = Exception("Project 'invalid' not found")
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act & Assert
+        with pytest.raises(Exception) as exc_info:
+            exporter.fetch_runs(project_name="invalid", limit=10)
+
+        assert (
+            "not found" in str(exc_info.value).lower()
+            or "project" in str(exc_info.value).lower()
+        )
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.time.sleep")
+    def test_network_timeout(self, mock_sleep, mock_client_class):
         """Test network timeout handling."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
 
-    def test_zero_traces_returned(self):
+        # Mock list_runs to always raise timeout error
+        mock_client.list_runs.side_effect = TimeoutError("Connection timeout")
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act & Assert - should retry and eventually fail
+        with pytest.raises(TimeoutError):
+            exporter.fetch_runs(project_name="test-project", limit=10)
+
+        # Should have retried MAX_RETRIES times
+        assert mock_client.list_runs.call_count == exporter.MAX_RETRIES
+
+    @patch("export_langsmith_traces.Client")
+    def test_zero_traces_returned(self, mock_client_class):
         """Test handling of empty results."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Mock list_runs to return empty list
+        mock_client.list_runs.return_value = []
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=10)
+
+        # Assert - should handle gracefully without error
+        assert runs == []
+        assert len(runs) == 0
 
 
 if __name__ == "__main__":

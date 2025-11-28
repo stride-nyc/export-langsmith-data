@@ -41,6 +41,18 @@ class ExportError(Exception):
     pass
 
 
+class ProjectNotFoundError(Exception):
+    """Raised when LangSmith project doesn't exist."""
+
+    pass
+
+
+class RateLimitError(Exception):
+    """Raised when rate limit exceeded after retries."""
+
+    pass
+
+
 class LangSmithExporter:
     """Handles LangSmith trace data export with rate limiting and error handling."""
 
