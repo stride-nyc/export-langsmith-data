@@ -21,6 +21,7 @@ Date: 2025-11-28
 """
 
 import argparse
+import time
 from typing import Any, Dict, List
 
 from langsmith import Client
@@ -80,7 +81,24 @@ class LangSmithExporter:
             ProjectNotFoundError: If project doesn't exist
             RateLimitError: If rate limit exceeded after retries
         """
-        raise NotImplementedError("fetch_runs() not yet implemented")
+        attempt = 0
+        while attempt < self.MAX_RETRIES:
+            try:
+                runs = list(
+                    self.client.list_runs(project_name=project_name, limit=limit)
+                )
+                return runs
+            except Exception:
+                attempt += 1
+                if attempt >= self.MAX_RETRIES:
+                    raise
+                # Exponential backoff
+                backoff_time = self.INITIAL_BACKOFF * (
+                    self.BACKOFF_MULTIPLIER ** (attempt - 1)
+                )
+                time.sleep(backoff_time)
+        # This should never be reached, but mypy needs it
+        raise Exception("Max retries exceeded")
 
     def format_trace_data(self, runs: List[Any]) -> Dict[str, Any]:
         """

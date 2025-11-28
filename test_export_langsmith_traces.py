@@ -120,17 +120,89 @@ class TestLangSmithExporter:
             or "api key" in str(exc_info.value).lower()
         )
 
-    def test_fetch_runs_success(self):
+    @patch("export_langsmith_traces.Client")
+    def test_fetch_runs_success(self, mock_client_class):
         """Test successful run fetching."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
 
-    def test_fetch_runs_with_rate_limit(self):
+        # Create mock Run objects
+        mock_run1 = Mock()
+        mock_run1.id = "run_1"
+        mock_run1.name = "test_run_1"
+
+        mock_run2 = Mock()
+        mock_run2.id = "run_2"
+        mock_run2.name = "test_run_2"
+
+        # Mock list_runs to return an iterable
+        mock_client.list_runs.return_value = [mock_run1, mock_run2]
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=2)
+
+        # Assert
+        mock_client.list_runs.assert_called_once_with(
+            project_name="test-project", limit=2
+        )
+        assert len(runs) == 2
+        assert runs[0].id == "run_1"
+        assert runs[1].id == "run_2"
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.time.sleep")  # Mock sleep to speed up test
+    def test_fetch_runs_with_rate_limit(self, mock_sleep, mock_client_class):
         """Test rate limit handling with retry."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
 
-    def test_fetch_runs_max_retries_exceeded(self):
+        # Create mock Run object for successful retry
+        mock_run = Mock()
+        mock_run.id = "run_1"
+
+        # Mock list_runs to fail once with rate limit, then succeed
+        mock_client.list_runs.side_effect = [
+            Exception("Rate limit exceeded"),  # First call fails
+            [mock_run],  # Second call succeeds
+        ]
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=1)
+
+        # Assert
+        assert len(runs) == 1
+        assert runs[0].id == "run_1"
+        assert mock_client.list_runs.call_count == 2  # Called twice (retry)
+        mock_sleep.assert_called_once()  # Sleep was called for backoff
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.time.sleep")  # Mock sleep to speed up test
+    def test_fetch_runs_max_retries_exceeded(self, mock_sleep, mock_client_class):
         """Test max retry limit raises error."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Mock list_runs to always fail
+        mock_client.list_runs.side_effect = Exception("Rate limit exceeded")
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act & Assert
+        with pytest.raises(Exception) as exc_info:
+            exporter.fetch_runs(project_name="test-project", limit=1)
+
+        assert "Rate limit exceeded" in str(exc_info.value)
+        # Should be called MAX_RETRIES times (5)
+        assert mock_client.list_runs.call_count == exporter.MAX_RETRIES
+        # Should sleep MAX_RETRIES - 1 times (4)
+        assert mock_sleep.call_count == exporter.MAX_RETRIES - 1
 
     def test_format_trace_data_complete_fields(self):
         """Test data formatting with all fields present."""
