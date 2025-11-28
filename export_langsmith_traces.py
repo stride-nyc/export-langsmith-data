@@ -148,7 +148,7 @@ class LangSmithExporter:
                     duration_seconds = (run.end_time - run.start_time).total_seconds()
 
             trace = {
-                "id": getattr(run, "id", None),
+                "id": str(getattr(run, "id", None)) if hasattr(run, "id") else None,
                 "name": getattr(run, "name", None),
                 "start_time": (
                     run.start_time.isoformat()
@@ -283,6 +283,15 @@ def main() -> None:
 
     Exits with status code 0 on success, 1 on error.
     """
+    # Ensure UTF-8 encoding for console output (Windows compatibility)
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+            sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+        except AttributeError:
+            # Python < 3.7 doesn't have reconfigure
+            pass
+
     try:
         # Parse arguments
         args = parse_arguments()
