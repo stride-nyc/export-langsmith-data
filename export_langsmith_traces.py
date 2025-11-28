@@ -21,14 +21,14 @@ Date: 2025-11-28
 """
 
 import argparse
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from langsmith import Client
 
 
 class AuthenticationError(Exception):
     """Raised when LangSmith API authentication fails."""
+
     pass
 
 
@@ -80,7 +80,7 @@ class LangSmithExporter:
             ProjectNotFoundError: If project doesn't exist
             RateLimitError: If rate limit exceeded after retries
         """
-        pass
+        raise NotImplementedError("fetch_runs() not yet implemented")
 
     def format_trace_data(self, runs: List[Any]) -> Dict[str, Any]:
         """
@@ -92,7 +92,7 @@ class LangSmithExporter:
         Returns:
             Dictionary matching the export schema
         """
-        pass
+        raise NotImplementedError("format_trace_data() not yet implemented")
 
     def export_to_json(self, data: Dict[str, Any], filepath: str) -> None:
         """
@@ -133,7 +133,9 @@ def _positive_int(value: str) -> int:
     try:
         ivalue = int(value)
         if ivalue <= 0:
-            raise argparse.ArgumentTypeError(f"{value} must be a positive integer (> 0)")
+            raise argparse.ArgumentTypeError(
+                f"{value} must be a positive integer (> 0)"
+            )
         return ivalue
     except ValueError:
         raise argparse.ArgumentTypeError(f"{value} must be an integer")
@@ -156,35 +158,29 @@ Example usage:
       --project "my-project" \\
       --limit 150 \\
       --output "traces_export.json"
-        """
+        """,
     )
 
     parser.add_argument(
         "--api-key",
         type=str,
         required=True,
-        help="LangSmith API key for authentication"
+        help="LangSmith API key for authentication",
     )
 
     parser.add_argument(
-        "--project",
-        type=str,
-        required=True,
-        help="LangSmith project name or ID"
+        "--project", type=str, required=True, help="LangSmith project name or ID"
     )
 
     parser.add_argument(
         "--limit",
         type=_positive_int,
         required=True,
-        help="Number of most recent traces to export (must be > 0)"
+        help="Number of most recent traces to export (must be > 0)",
     )
 
     parser.add_argument(
-        "--output",
-        type=str,
-        required=True,
-        help="Output JSON file path"
+        "--output", type=str, required=True, help="Output JSON file path"
     )
 
     return parser.parse_args()

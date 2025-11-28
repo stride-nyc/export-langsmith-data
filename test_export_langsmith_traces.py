@@ -11,7 +11,7 @@ Date: 2025-11-28
 """
 
 import pytest
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import Mock, patch
 from export_langsmith_traces import (
     LangSmithExporter,
     parse_arguments,
@@ -26,14 +26,18 @@ class TestArgumentParsing:
         """Test that all required arguments are parsed correctly."""
         # Arrange
         test_args = [
-            "--api-key", "lsv2_pt_test_key",
-            "--project", "test-project",
-            "--limit", "100",
-            "--output", "test_output.json"
+            "--api-key",
+            "lsv2_pt_test_key",
+            "--project",
+            "test-project",
+            "--limit",
+            "100",
+            "--output",
+            "test_output.json",
         ]
 
         # Act
-        with patch('sys.argv', ['export_langsmith_traces.py'] + test_args):
+        with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
             args = parse_arguments()
 
         # Assert
@@ -46,13 +50,16 @@ class TestArgumentParsing:
         """Test that missing required argument raises error."""
         # Arrange - missing --api-key argument
         test_args = [
-            "--project", "test-project",
-            "--limit", "100",
-            "--output", "test_output.json"
+            "--project",
+            "test-project",
+            "--limit",
+            "100",
+            "--output",
+            "test_output.json",
         ]
 
         # Act & Assert - should raise SystemExit
-        with patch('sys.argv', ['export_langsmith_traces.py'] + test_args):
+        with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
             with pytest.raises(SystemExit):
                 parse_arguments()
 
@@ -60,14 +67,18 @@ class TestArgumentParsing:
         """Test that negative or zero limit is rejected."""
         # Arrange - negative limit
         test_args = [
-            "--api-key", "lsv2_pt_test_key",
-            "--project", "test-project",
-            "--limit", "-10",
-            "--output", "test_output.json"
+            "--api-key",
+            "lsv2_pt_test_key",
+            "--project",
+            "test-project",
+            "--limit",
+            "-10",
+            "--output",
+            "test_output.json",
         ]
 
         # Act & Assert - should raise SystemExit
-        with patch('sys.argv', ['export_langsmith_traces.py'] + test_args):
+        with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
             with pytest.raises(SystemExit):
                 parse_arguments()
 
@@ -75,7 +86,7 @@ class TestArgumentParsing:
 class TestLangSmithExporter:
     """Test LangSmithExporter class methods."""
 
-    @patch('export_langsmith_traces.Client')
+    @patch("export_langsmith_traces.Client")
     def test_client_init_success(self, mock_client_class):
         """Test successful client initialization with valid API key."""
         # Arrange
@@ -93,7 +104,7 @@ class TestLangSmithExporter:
         assert exporter.api_key == api_key
         assert exporter.api_url == api_url
 
-    @patch('export_langsmith_traces.Client')
+    @patch("export_langsmith_traces.Client")
     def test_client_init_auth_error(self, mock_client_class):
         """Test authentication error handling."""
         # Arrange - Mock Client to raise an authentication error
@@ -104,7 +115,10 @@ class TestLangSmithExporter:
         with pytest.raises(AuthenticationError) as exc_info:
             LangSmithExporter(api_key=api_key)
 
-        assert "authentication" in str(exc_info.value).lower() or "api key" in str(exc_info.value).lower()
+        assert (
+            "authentication" in str(exc_info.value).lower()
+            or "api key" in str(exc_info.value).lower()
+        )
 
     def test_fetch_runs_success(self):
         """Test successful run fetching."""
