@@ -466,5 +466,100 @@ class TestErrorHandling:
         assert len(runs) == 0
 
 
+class TestIntegration:
+    """Test end-to-end integration."""
+
+    @patch("export_langsmith_traces.Client")
+    @patch("sys.argv")
+    def test_main_success_workflow(self, mock_argv, mock_client_class):
+        """Test successful end-to-end execution of main()."""
+        import tempfile
+        import os
+        from export_langsmith_traces import main
+
+        # Arrange - Set up command-line arguments
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, suffix=".json"
+        ) as temp_file:
+            temp_output = temp_file.name
+
+        try:
+            mock_argv.__getitem__ = Mock(
+                side_effect=lambda i: [
+                    "export_langsmith_traces.py",
+                    "--api-key",
+                    "test_key",
+                    "--project",
+                    "test-project",
+                    "--limit",
+                    "10",
+                    "--output",
+                    temp_output,
+                ][i]
+            )
+
+            # Mock Client and its behavior
+            mock_client = Mock()
+            mock_client_class.return_value = mock_client
+
+            # Create mock runs with only essential attributes
+            mock_run = Mock(spec=["id", "name"])
+            mock_run.id = "run_123"
+            mock_run.name = "test_run"
+
+            mock_client.list_runs.return_value = [mock_run]
+
+            # Act - Run main()
+            main()
+
+            # Assert - Verify file was created and contains data
+            assert os.path.exists(temp_output)
+
+            with open(temp_output, "r") as f:
+                import json
+
+                data = json.load(f)
+
+            assert "export_metadata" in data
+            assert "traces" in data
+            assert data["export_metadata"]["total_traces"] == 1
+            assert len(data["traces"]) == 1
+
+        finally:
+            # Cleanup
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
+
+    @patch("export_langsmith_traces.Client")
+    @patch("sys.argv")
+    def test_main_authentication_error(self, mock_argv, mock_client_class):
+        """Test main() handles authentication error gracefully."""
+        from export_langsmith_traces import main
+
+        # Arrange
+        mock_argv.__getitem__ = Mock(
+            side_effect=lambda i: [
+                "export_langsmith_traces.py",
+                "--api-key",
+                "invalid_key",
+                "--project",
+                "test-project",
+                "--limit",
+                "10",
+                "--output",
+                "output.json",
+            ][i]
+        )
+
+        # Mock Client to raise authentication error
+        mock_client_class.side_effect = Exception("Invalid API key")
+
+        # Act & Assert - Should exit with status 1
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

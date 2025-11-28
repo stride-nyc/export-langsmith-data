@@ -22,6 +22,7 @@ Date: 2025-11-28
 
 import argparse
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -270,8 +271,70 @@ Example usage:
 
 
 def main() -> None:
-    """Main execution function."""
-    pass
+    """
+    Main execution function that orchestrates the export workflow.
+
+    Workflow:
+    1. Parse command-line arguments
+    2. Initialize LangSmith client
+    3. Fetch runs from project
+    4. Format trace data
+    5. Export to JSON file
+
+    Exits with status code 0 on success, 1 on error.
+    """
+    try:
+        # Parse arguments
+        args = parse_arguments()
+
+        print(f"🚀 Exporting {args.limit} traces from project '{args.project}'...")
+
+        # Initialize exporter
+        try:
+            exporter = LangSmithExporter(api_key=args.api_key)
+            print("✓ Connected to LangSmith API")
+        except AuthenticationError as e:
+            print(f"❌ Authentication failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Fetch runs
+        try:
+            print("📥 Fetching traces...")
+            runs = exporter.fetch_runs(project_name=args.project, limit=args.limit)
+            print(f"✓ Fetched {len(runs)} traces")
+
+            if len(runs) == 0:
+                print("⚠️  No traces found in project")
+                # Still export empty result
+        except Exception as e:
+            print(f"❌ Failed to fetch traces: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Format data
+        print("🔄 Formatting trace data...")
+        formatted_data = exporter.format_trace_data(runs)
+        print("✓ Data formatted")
+
+        # Export to JSON
+        try:
+            print(f"💾 Exporting to {args.output}...")
+            exporter.export_to_json(formatted_data, args.output)
+            print(f"✅ Export complete! Saved to {args.output}")
+        except ExportError as e:
+            print(f"❌ Failed to export data: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Success summary
+        print("\n📊 Summary:")
+        print(f"   Total traces exported: {len(runs)}")
+        print(f"   Output file: {args.output}")
+
+    except KeyboardInterrupt:
+        print("\n⚠️  Export cancelled by user", file=sys.stderr)
+        sys.exit(130)  # Standard exit code for SIGINT
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
