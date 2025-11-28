@@ -22,6 +22,7 @@ Date: 2025-11-28
 
 import argparse
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from langsmith import Client
@@ -110,7 +111,46 @@ class LangSmithExporter:
         Returns:
             Dictionary matching the export schema
         """
-        raise NotImplementedError("format_trace_data() not yet implemented")
+        # Create metadata
+        export_metadata = {
+            "export_timestamp": datetime.now(timezone.utc).isoformat(),
+            "total_traces": len(runs),
+            "langsmith_api_version": "0.4.x",
+        }
+
+        # Transform runs to trace format
+        traces = []
+        for run in runs:
+            # Calculate duration
+            duration_seconds = 0
+            if hasattr(run, "start_time") and hasattr(run, "end_time"):
+                if run.start_time and run.end_time:
+                    duration_seconds = (run.end_time - run.start_time).total_seconds()
+
+            trace = {
+                "id": getattr(run, "id", None),
+                "name": getattr(run, "name", None),
+                "start_time": (
+                    run.start_time.isoformat()
+                    if hasattr(run, "start_time") and run.start_time
+                    else None
+                ),
+                "end_time": (
+                    run.end_time.isoformat()
+                    if hasattr(run, "end_time") and run.end_time
+                    else None
+                ),
+                "duration_seconds": duration_seconds,
+                "status": getattr(run, "status", None),
+                "inputs": getattr(run, "inputs", {}),
+                "outputs": getattr(run, "outputs", {}),
+                "error": getattr(run, "error", None),
+                "run_type": getattr(run, "run_type", None),
+                "child_runs": getattr(run, "child_runs", []),
+            }
+            traces.append(trace)
+
+        return {"export_metadata": export_metadata, "traces": traces}
 
     def export_to_json(self, data: Dict[str, Any], filepath: str) -> None:
         """

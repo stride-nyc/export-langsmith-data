@@ -204,17 +204,133 @@ class TestLangSmithExporter:
         # Should sleep MAX_RETRIES - 1 times (4)
         assert mock_sleep.call_count == exporter.MAX_RETRIES - 1
 
-    def test_format_trace_data_complete_fields(self):
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_complete_fields(self, mock_client_class):
         """Test data formatting with all fields present."""
-        pass
+        # Arrange
+        from datetime import datetime, timezone
 
-    def test_format_trace_data_missing_fields(self):
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock Run with all fields
+        mock_run = Mock()
+        mock_run.id = "run_123"
+        mock_run.name = "test_workflow"
+        mock_run.start_time = datetime(2025, 11, 28, 10, 0, 0, tzinfo=timezone.utc)
+        mock_run.end_time = datetime(2025, 11, 28, 10, 15, 0, tzinfo=timezone.utc)
+        mock_run.status = "success"
+        mock_run.inputs = {"input_key": "input_value"}
+        mock_run.outputs = {"output_key": "output_value"}
+        mock_run.error = None
+        mock_run.run_type = "chain"
+        mock_run.child_runs = []
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert
+        assert "export_metadata" in result
+        assert "traces" in result
+
+        # Check metadata
+        metadata = result["export_metadata"]
+        assert "export_timestamp" in metadata
+        assert "total_traces" in metadata
+        assert metadata["total_traces"] == 1
+
+        # Check trace data
+        traces = result["traces"]
+        assert len(traces) == 1
+
+        trace = traces[0]
+        assert trace["id"] == "run_123"
+        assert trace["name"] == "test_workflow"
+        assert trace["status"] == "success"
+        assert trace["inputs"] == {"input_key": "input_value"}
+        assert trace["outputs"] == {"output_key": "output_value"}
+        assert trace["error"] is None
+        assert trace["run_type"] == "chain"
+        assert "start_time" in trace
+        assert "end_time" in trace
+        assert "duration_seconds" in trace
+        assert trace["child_runs"] == []
+
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_missing_fields(self, mock_client_class):
         """Test safe handling of missing/null fields."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
 
-    def test_format_trace_data_with_child_runs(self):
+        # Create mock Run with minimal fields (many missing/None)
+        mock_run = Mock(spec=[])  # Empty spec means no attributes by default
+        mock_run.id = "run_456"
+        mock_run.name = "minimal_run"
+        # Missing: start_time, end_time, status, inputs, outputs, error, run_type, child_runs
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert - should not crash and use default values
+        assert "traces" in result
+        traces = result["traces"]
+        assert len(traces) == 1
+
+        trace = traces[0]
+        assert trace["id"] == "run_456"
+        assert trace["name"] == "minimal_run"
+        assert trace["start_time"] is None
+        assert trace["end_time"] is None
+        assert trace["duration_seconds"] == 0
+        assert trace["status"] is None
+        assert trace["inputs"] == {}
+        assert trace["outputs"] == {}
+        assert trace["error"] is None
+        assert trace["run_type"] is None
+        assert trace["child_runs"] == []
+
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_with_child_runs(self, mock_client_class):
         """Test nested run relationship handling."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock child runs
+        child_run1 = Mock(spec=["id", "name"])
+        child_run1.id = "child_1"
+        child_run1.name = "child_workflow_1"
+
+        child_run2 = Mock(spec=["id", "name"])
+        child_run2.id = "child_2"
+        child_run2.name = "child_workflow_2"
+
+        # Create parent run with children
+        parent_run = Mock(spec=["id", "name", "child_runs"])
+        parent_run.id = "parent_789"
+        parent_run.name = "parent_workflow"
+        parent_run.child_runs = [child_run1, child_run2]
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([parent_run])
+
+        # Assert
+        traces = result["traces"]
+        assert len(traces) == 1
+
+        parent_trace = traces[0]
+        assert parent_trace["id"] == "parent_789"
+        assert parent_trace["name"] == "parent_workflow"
+        assert len(parent_trace["child_runs"]) == 2
+        assert parent_trace["child_runs"][0].id == "child_1"
+        assert parent_trace["child_runs"][1].id == "child_2"
 
     def test_export_to_json_success(self):
         """Test successful JSON file creation."""
