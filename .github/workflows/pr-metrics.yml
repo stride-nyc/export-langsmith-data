@@ -1,0 +1,159 @@
+name: PR Metrics
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  analyze:
+    name: Analyze PR
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Analyze PR metrics
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            // Calculate metrics
+            let totalAdditions = 0;
+            let totalDeletions = 0;
+            let prodFiles = 0;
+            let testFiles = 0;
+            let prodLines = 0;
+            let testLines = 0;
+
+            files.forEach(file => {
+              totalAdditions += file.additions;
+              totalDeletions += file.deletions;
+
+              // Count Python files
+              const isTest = file.filename.includes('test') || file.filename.includes('spec');
+              const isPython = file.filename.endsWith('.py');
+
+              if (isPython) {
+                if (isTest) {
+                  testFiles++;
+                  testLines += file.additions;
+                } else if (!file.filename.includes('__pycache__')) {
+                  prodFiles++;
+                  prodLines += file.additions;
+                }
+              }
+            });
+
+            // Size classification
+            let sizeLabel = 'small';
+            if (prodLines > 500) sizeLabel = 'extra-large';
+            else if (prodLines > 200) sizeLabel = 'large';
+            else if (prodLines > 100) sizeLabel = 'medium';
+
+            const testRatio = prodLines > 0 ? (testLines / prodLines).toFixed(2) : 'N/A';
+
+            // Commit analysis
+            const { data: commits } = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            let largeCommits = 0;
+            let sprawlingCommits = 0;
+
+            for (const commit of commits) {
+              const { data: commitDetail } = await github.rest.repos.getCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: commit.sha
+              });
+
+              const commitFiles = commitDetail.files?.length || 0;
+              const commitLines = commitDetail.stats.additions;
+
+              if (commitLines > 100) largeCommits++;
+              if (commitFiles > 5) sprawlingCommits++;
+            }
+
+            const largeCommitPct = ((largeCommits / commits.length) * 100).toFixed(0);
+            const sprawlingCommitPct = ((sprawlingCommits / commits.length) * 100).toFixed(0);
+
+            // Generate recommendations
+            let recommendations = [];
+            if (sizeLabel === 'extra-large') {
+              recommendations.push(':warning: **Extra-large PR**: Consider breaking into smaller PRs for easier review');
+            }
+            if (sizeLabel === 'large') {
+              recommendations.push(':warning: **Large PR**: This may take longer to review. Consider incremental changes in future.');
+            }
+            if (parseFloat(testRatio) < 0.5) {
+              recommendations.push(':warning: **Low test coverage**: Consider adding more tests for production code');
+            }
+            if (largeCommitPct > 20) {
+              recommendations.push(':warning: **High % of large commits**: Aim for smaller, atomic commits');
+            }
+            if (sprawlingCommitPct > 10) {
+              recommendations.push(':warning: **High % of sprawling commits**: Try to limit changes to fewer files per commit');
+            }
+            if (sizeLabel === 'small' && parseFloat(testRatio) >= 0.5 && largeCommitPct <= 20) {
+              recommendations.push(':white_check_mark: **Excellent!** Well-sized PR with good commit discipline');
+            }
+
+            const recommendationsText = recommendations.length > 0 ?
+              recommendations.map(r => `- ${r}`).join('\n') :
+              ':white_check_mark: No concerns identified';
+
+            // Generate comment
+            const comment = `
+            ## :bar_chart: PR Metrics Analysis
+
+            ### Size Classification
+            **${sizeLabel.toUpperCase()}** (${prodLines} production lines)
+
+            | Metric | Value | Target |
+            |--------|-------|--------|
+            | Production files changed | ${prodFiles} | - |
+            | Test files changed | ${testFiles} | - |
+            | Production lines added | ${prodLines} | <200 for easy review |
+            | Test lines added | ${testLines} | - |
+            | Test-to-production ratio | ${testRatio} | 0.5-2.0 |
+
+            ### Commit Quality
+            ${commits.length} commits analyzed
+
+            | Metric | Count | % | Target |
+            |--------|-------|---|--------|
+            | Large commits (>100 lines) | ${largeCommits} | ${largeCommitPct}% | <20% |
+            | Sprawling commits (>5 files) | ${sprawlingCommits} | ${sprawlingCommitPct}% | <10% |
+
+            ### Recommendations
+
+            ${recommendationsText}
+
+            ---
+            *Automated analysis via [PDCA Framework](https://github.com/kenjudy/human-ai-collaboration-process)*
+            `;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
