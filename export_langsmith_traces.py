@@ -21,6 +21,7 @@ Date: 2025-11-28
 """
 
 import argparse
+import json
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -30,6 +31,12 @@ from langsmith import Client
 
 class AuthenticationError(Exception):
     """Raised when LangSmith API authentication fails."""
+
+    pass
+
+
+class ExportError(Exception):
+    """Raised when JSON export fails."""
 
     pass
 
@@ -163,7 +170,13 @@ class LangSmithExporter:
         Raises:
             ExportError: If file write fails
         """
-        pass
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            raise ExportError(
+                f"Failed to export data to {filepath}. Error: {str(e)}"
+            ) from e
 
     def _handle_rate_limit(self, attempt: int) -> None:
         """

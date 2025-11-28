@@ -16,6 +16,7 @@ from export_langsmith_traces import (
     LangSmithExporter,
     parse_arguments,
     AuthenticationError,
+    ExportError,
 )
 
 
@@ -332,13 +333,73 @@ class TestLangSmithExporter:
         assert parent_trace["child_runs"][0].id == "child_1"
         assert parent_trace["child_runs"][1].id == "child_2"
 
-    def test_export_to_json_success(self):
+    @patch("export_langsmith_traces.Client")
+    def test_export_to_json_success(self, mock_client_class):
         """Test successful JSON file creation."""
-        pass
+        import json
+        import tempfile
+        import os
 
-    def test_export_to_json_write_error(self):
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        test_data = {
+            "export_metadata": {
+                "export_timestamp": "2025-11-28T12:00:00Z",
+                "total_traces": 1,
+            },
+            "traces": [{"id": "test_123", "name": "test_trace"}],
+        }
+
+        # Create a temporary file path
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+            temp_path = f.name
+
+        try:
+            # Act
+            exporter.export_to_json(test_data, temp_path)
+
+            # Assert
+            assert os.path.exists(temp_path)
+
+            # Read and verify JSON content
+            with open(temp_path, "r") as f:
+                saved_data = json.load(f)
+
+            assert saved_data == test_data
+            assert saved_data["export_metadata"]["total_traces"] == 1
+            assert len(saved_data["traces"]) == 1
+        finally:
+            # Cleanup
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.open")
+    def test_export_to_json_write_error(self, mock_open, mock_client_class):
         """Test file write error handling."""
-        pass
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Mock open to raise PermissionError
+        mock_open.side_effect = PermissionError("Permission denied")
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        test_data = {"export_metadata": {}, "traces": []}
+
+        # Act & Assert
+        with pytest.raises(ExportError) as exc_info:
+            exporter.export_to_json(test_data, "/invalid/path/file.json")
+
+        assert (
+            "export" in str(exc_info.value).lower()
+            or "permission" in str(exc_info.value).lower()
+        )
 
 
 class TestErrorHandling:
