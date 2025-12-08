@@ -645,7 +645,7 @@ class TestBottleneckIdentification:
 
         node3 = Trace(
             id="node-3",
-            name="import_to_neota",
+            name="import_step",
             start_time=None,
             end_time=None,
             duration_seconds=100.0,  # 17% of workflow
@@ -663,7 +663,7 @@ class TestBottleneckIdentification:
             nodes={
                 "generate_spec": [node1],
                 "xml_transformation": [node2],
-                "import_to_neota": [node3],
+                "import_step": [node3],
             },
             all_traces=[root, node1, node2, node3],
         )

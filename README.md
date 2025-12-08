@@ -146,20 +146,20 @@ python export_langsmith_traces.py \
 ```bash
 # Set up .env file once
 echo "LANGSMITH_API_KEY=lsv2_pt_abc123..." >> .env
-echo "LANGSMITH_PROJECT=neota-aesp-project" >> .env
+echo "LANGSMITH_PROJECT=your-project-name" >> .env
 echo "LANGSMITH_LIMIT=200" >> .env
 
 # Simple usage
-python export_langsmith_traces.py --output "neota_traces_2025-11-28.json"
+python export_langsmith_traces.py --output "traces_2025-11-28.json"
 ```
 
 **Using CLI arguments:**
 ```bash
 python export_langsmith_traces.py \
   --api-key "lsv2_pt_abc123..." \
-  --project "neota-aesp-project" \
+  --project "your-project-name" \
   --limit 200 \
-  --output "neota_traces_2025-11-28.json"
+  --output "traces_2025-11-28.json"
 ```
 
 **Mixed usage:**
@@ -295,6 +295,36 @@ The analysis generates CSV files in the `output/` directory:
    - Time savings calculation
    - Confidence level assessment
 
+## Validating Exports
+
+After exporting data, use the validation utility to check data quality and statistical validity:
+
+```bash
+python validate_export.py traces_export.json
+```
+
+The validator provides:
+- **Dataset overview**: Workflow counts, hierarchical data status
+- **Workflow statistics**: Validator presence, duration stats, unique nodes
+- **Statistical validity assessment**: Sample size adequacy for each analysis type
+- **Recommendations**: Whether the dataset is ready for analysis
+
+**Example output:**
+```
+DATASET OVERVIEW
+  Total workflows:        384
+  Hierarchical data:      Yes
+  Workflows with validators: 15
+
+STATISTICAL VALIDITY ASSESSMENT
+  Latency Analysis:       EXCELLENT (n >= 100)
+  Bottleneck Analysis:    EXCELLENT (n >= 100)
+  Parallel Analysis:      WEAK (10 <= n < 20, low confidence)
+
+RECOMMENDATION
+  Status: READY FOR COMPREHENSIVE ANALYSIS
+```
+
 ## Export Output Format
 
 The script generates a JSON file with the following structure:
@@ -371,7 +401,9 @@ export-langsmith-data/
 ├── PLAN.md                          # PDCA implementation plan
 ├── export-langsmith-requirements.md # Export requirements specification
 ├── export_langsmith_traces.py       # Data export script
-├── test_export_langsmith_traces.py  # Export test suite (33 tests)
+├── test_export_langsmith_traces.py  # Export test suite (42 tests)
+├── validate_export.py               # Export validation utility
+├── test_validate_export.py          # Validation test suite (7 tests)
 ├── analyze_traces.py                # Performance analysis module
 ├── test_analyze_traces.py           # Analysis test suite (31 tests)
 ├── notebooks/

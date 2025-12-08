@@ -319,9 +319,7 @@ class TestLangSmithExporter:
 
         # Assert
         # Updated: no limit passed to API (SDK handles internal pagination)
-        mock_client.list_runs.assert_called_once_with(
-            project_name="test-project"
-        )
+        mock_client.list_runs.assert_called_once_with(project_name="test-project")
         assert len(runs) == 2
         assert runs[0].id == "run_1"
         assert runs[1].id == "run_2"
@@ -859,7 +857,7 @@ class TestPagination:
             if limit is not None and limit > 100:
                 raise Exception(
                     "Failed to POST /runs/query in LangSmith API. "
-                    'HTTPError(\'400 Client Error: Bad Request\', '
+                    "HTTPError('400 Client Error: Bad Request', "
                     '\'{"detail":"Limit exceeds maximum allowed value of 100"}\')'
                 )
             # If no limit specified, return all runs (SDK handles internal pagination)
