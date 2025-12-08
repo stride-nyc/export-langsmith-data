@@ -318,8 +318,9 @@ class TestLangSmithExporter:
         runs = exporter.fetch_runs(project_name="test-project", limit=2)
 
         # Assert
+        # Updated: no limit passed to API (SDK handles internal pagination)
         mock_client.list_runs.assert_called_once_with(
-            project_name="test-project", limit=2
+            project_name="test-project"
         )
         assert len(runs) == 2
         assert runs[0].id == "run_1"
@@ -761,7 +762,8 @@ class TestPagination:
         # Assert
         assert len(runs) == 50
         assert mock_client.list_runs.call_count == 1  # Only one API call
-        mock_client.list_runs.assert_called_with(project_name="test-project", limit=50)
+        # Updated: no limit passed to API (SDK handles internal pagination)
+        mock_client.list_runs.assert_called_with(project_name="test-project")
 
     @patch("export_langsmith_traces.Client")
     @patch("export_langsmith_traces.time.sleep")
@@ -790,12 +792,10 @@ class TestPagination:
         assert len(runs) == 250
         assert mock_client.list_runs.call_count == 3  # 3 pages (100 + 100 + 50)
 
-        # Verify calls were made with correct parameters
+        # Updated: Verify no limit parameter passed (SDK handles internal pagination)
         calls = mock_client.list_runs.call_args_list
-        # First page requests 100, second requests 200 total (to skip 100), third requests 250 total (to skip 200)
-        assert calls[0].kwargs["limit"] == 100
-        assert calls[1].kwargs["limit"] == 200
-        assert calls[2].kwargs["limit"] == 250
+        for call in calls:
+            assert "limit" not in call.kwargs, "No limit should be passed to API"
 
     @patch("export_langsmith_traces.Client")
     @patch("builtins.print")
@@ -840,7 +840,50 @@ class TestPagination:
 
         # Assert
         assert len(runs) == 0
-        assert runs == []
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.time.sleep")
+    def test_fetch_runs_respects_api_100_limit(self, mock_sleep, mock_client_class):
+        """Test that pagination never passes limit > 100 to API (real API constraint)."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create 250 mock runs
+        all_mock_runs = [Mock(id=f"run_{i}", name=f"test_{i}") for i in range(250)]
+
+        # Mock list_runs to REJECT limit > 100 (simulating real API behavior)
+        # When no limit specified, return ALL runs (simulating SDK's internal pagination)
+        def mock_list_runs(*args, **kwargs):
+            limit = kwargs.get("limit", None)
+            if limit is not None and limit > 100:
+                raise Exception(
+                    "Failed to POST /runs/query in LangSmith API. "
+                    'HTTPError(\'400 Client Error: Bad Request\', '
+                    '\'{"detail":"Limit exceeds maximum allowed value of 100"}\')'
+                )
+            # If no limit specified, return all runs (SDK handles internal pagination)
+            if limit is None:
+                return iter(all_mock_runs)
+            else:
+                return iter(all_mock_runs[:limit])
+
+        mock_client.list_runs.side_effect = mock_list_runs
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act - Request 250 runs (should handle pagination internally)
+        runs = exporter.fetch_runs(project_name="test-project", limit=250)
+
+        # Assert
+        assert len(runs) == 250
+        # Verify NO call passed limit > 100 to the API
+        # (None or missing limit is acceptable - SDK handles pagination internally)
+        for call in mock_client.list_runs.call_args_list:
+            limit_arg = call.kwargs.get("limit", None)
+            assert (
+                limit_arg is None or limit_arg <= 100
+            ), f"API called with limit={limit_arg} (must be None or <= 100)"
 
     @patch("export_langsmith_traces.Client")
     @patch("export_langsmith_traces.time.sleep")

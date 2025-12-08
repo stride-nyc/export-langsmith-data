@@ -225,14 +225,13 @@ class LangSmithExporter:
         while attempt < self.MAX_RETRIES:
             try:
                 # Since LangSmith SDK doesn't support offset parameter,
-                # we request all runs up to our position + page size,
+                # and the API has a hard limit of 100 for the limit parameter,
+                # we request ALL runs (no limit) and let the SDK handle internal pagination,
                 # then skip to our position using islice
-                total_to_request = fetched_so_far + limit
 
                 # Try with project_name first
-                runs_iterator = self.client.list_runs(
-                    project_name=project_name, limit=total_to_request
-                )
+                # Don't pass limit to avoid API's 100-limit restriction
+                runs_iterator = self.client.list_runs(project_name=project_name)
 
                 # Skip already-fetched runs and take the next page
                 page_runs = list(
@@ -254,8 +253,9 @@ class LangSmithExporter:
                     if self._looks_like_uuid(project_name):
                         print("Trying project ID instead of name...")
                         try:
+                            # Don't pass limit to avoid API's 100-limit restriction
                             runs_iterator = self.client.list_runs(
-                                project_id=project_name, limit=total_to_request
+                                project_id=project_name
                             )
                             page_runs = list(
                                 islice(
