@@ -9,12 +9,13 @@ This Python script exports trace data from LangSmith using the SDK API, designed
 ## Features
 
 - Export N most recent traces from any LangSmith project
+- **Environment variable support** - Configure once via `.env` file for simplified usage
 - Automatic rate limiting with exponential backoff
 - Progress indication for long-running exports
 - Comprehensive error handling (auth, network, rate limits)
 - Structured JSON output with metadata
 - Type-safe implementation with full type hints
-- Test-driven development with pytest suite
+- Test-driven development with pytest suite (25 tests, 86% coverage)
 
 ## Requirements
 
@@ -36,7 +37,7 @@ cd export-langsmith-data
 **Option A: Using uv (recommended)**
 ```bash
 uv venv
-source .venv/Scripts/activate  # Windows
+.venv/Scripts/activate  # Windows
 # or
 source .venv/bin/activate      # Linux/Mac
 ```
@@ -44,7 +45,7 @@ source .venv/bin/activate      # Linux/Mac
 **Option B: Using venv**
 ```bash
 python -m venv .venv
-source .venv/Scripts/activate  # Windows
+.venv/Scripts/activate  # Windows
 # or
 source .venv/bin/activate      # Linux/Mac
 ```
@@ -225,6 +226,7 @@ All core features implemented and tested:
 - ✅ Project setup with virtual environment (uv/venv)
 - ✅ Dependencies configuration with CI/CD quality gates
 - ✅ CLI argument parsing with validation
+- ✅ **Environment variable support** - Optional `.env` file configuration for simplified usage
 - ✅ LangSmith client initialization with authentication
 - ✅ Run fetching with exponential backoff rate limiting
 - ✅ Data formatting and transformation with safe field extraction
@@ -232,7 +234,7 @@ All core features implemented and tested:
 - ✅ Comprehensive error scenario handling
 - ✅ Main orchestration with user-friendly progress feedback
 - ✅ End-to-end integration testing
-- ✅ Test suite: 18 tests, 87% coverage
+- ✅ Test suite: 25 tests, 86% coverage
 - ✅ Code quality: Black, Ruff, mypy, Bandit, Safety checks passing
 
 ### Optional Features Not Implemented

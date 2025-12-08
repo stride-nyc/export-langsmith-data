@@ -92,9 +92,10 @@ class LangSmithExporter:
     def _looks_like_uuid(self, value: str) -> bool:
         """Check if a string looks like a UUID."""
         import re
+
         uuid_pattern = re.compile(
-            r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 
-            re.IGNORECASE
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            re.IGNORECASE,
         )
         return bool(uuid_pattern.match(value))
 
@@ -115,7 +116,7 @@ class LangSmithExporter:
         """
         attempt = 0
         last_exception = None
-        
+
         while attempt < self.MAX_RETRIES:
             try:
                 # Try with project_name parameter first
@@ -126,20 +127,25 @@ class LangSmithExporter:
             except Exception as e:
                 last_exception = e
                 error_msg = str(e).lower()
-                
+
                 # Check if this is a project not found error (not a rate limit or network error)
-                if any(term in error_msg for term in ["not found", "does not exist", "project", "404"]):
+                if any(
+                    term in error_msg
+                    for term in ["not found", "does not exist", "project", "404"]
+                ):
                     # If it looks like a UUID, try as project_id instead
                     if self._looks_like_uuid(project_name):
                         print("Trying project ID instead of name...")
                         try:
                             runs = list(
-                                self.client.list_runs(project_id=project_name, limit=limit)
+                                self.client.list_runs(
+                                    project_id=project_name, limit=limit
+                                )
                             )
                             return runs
-                        except Exception:
-                            pass  # Fall through to retry logic
-                    
+                        except Exception:  # nosec B110
+                            pass  # Intentional: Fall through to retry logic if project_id also fails
+
                     # If first attempt and looks like project name issue, raise specific error
                     if attempt == 0:
                         raise ProjectNotFoundError(
@@ -148,7 +154,7 @@ class LangSmithExporter:
                             f"You can find the project ID in the LangSmith URL when viewing your project. "
                             f"Original error: {str(e)}"
                         ) from e
-                
+
                 attempt += 1
                 if attempt >= self.MAX_RETRIES:
                     break
@@ -157,7 +163,7 @@ class LangSmithExporter:
                     self.BACKOFF_MULTIPLIER ** (attempt - 1)
                 )
                 time.sleep(backoff_time)
-        
+
         # If we get here, all retries failed
         raise RateLimitError(
             f"Failed to fetch runs after {self.MAX_RETRIES} attempts. "
@@ -274,10 +280,10 @@ def _get_env_limit() -> int:
         limit_str = os.getenv("LANGSMITH_LIMIT", "0")
         limit = int(limit_str)
         if limit <= 0:
-            return 0 
+            return 0
         return limit
     except ValueError:
-        return 0  
+        return 0
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -289,7 +295,7 @@ def parse_arguments() -> argparse.Namespace:
     """
     # Load environment variables from .env file
     load_dotenv()
-    
+
     parser = argparse.ArgumentParser(
         description="Export LangSmith trace data for offline analysis",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -325,7 +331,7 @@ Example usage with .env file:
         type=str,
         required=False,
         default=os.getenv("LANGSMITH_PROJECT"),
-        help="LangSmith project name or ID (default: LANGSMITH_PROJECT env var)"
+        help="LangSmith project name or ID (default: LANGSMITH_PROJECT env var)",
     )
 
     parser.add_argument(
@@ -346,24 +352,24 @@ Example usage with .env file:
 def validate_required_args(args: argparse.Namespace) -> None:
     """
     Validate that required arguments are provided via CLI or environment.
-    
+
     Args:
         args: Parsed command line arguments
-        
+
     Raises:
         SystemExit: If required arguments are missing
     """
     errors = []
-    
+
     if not args.api_key:
         errors.append("--api-key is required (or set LANGSMITH_API_KEY in .env)")
-    
+
     if not args.project:
         errors.append("--project is required (or set LANGSMITH_PROJECT in .env)")
-    
+
     if not args.limit:
         errors.append("--limit is required (or set LANGSMITH_LIMIT in .env)")
-    
+
     if errors:
         print("❌ Missing required arguments:", file=sys.stderr)
         for error in errors:
@@ -399,7 +405,7 @@ def main() -> None:
     try:
         # Parse arguments
         args = parse_arguments()
-        
+
         # Validate that required arguments are available
         validate_required_args(args)
 
