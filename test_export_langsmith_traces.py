@@ -598,6 +598,208 @@ class TestErrorHandling:
         assert len(runs) == 0
 
 
+class TestPagination:
+    """Test pagination logic for handling > 100 record limits."""
+
+    @patch("export_langsmith_traces.Client")
+    def test_fetch_runs_single_page(self, mock_client_class):
+        """Test fetching runs that fit in a single page (limit <= 100)."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create 50 mock runs
+        mock_runs = [Mock(id=f"run_{i}", name=f"test_{i}") for i in range(50)]
+        mock_client.list_runs.return_value = iter(mock_runs)
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=50)
+
+        # Assert
+        assert len(runs) == 50
+        assert mock_client.list_runs.call_count == 1  # Only one API call
+        mock_client.list_runs.assert_called_with(project_name="test-project", limit=50)
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.time.sleep")
+    def test_fetch_runs_multiple_pages(self, mock_sleep, mock_client_class):
+        """Test fetching runs across multiple pages (limit > 100)."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create 250 mock runs
+        all_mock_runs = [Mock(id=f"run_{i}", name=f"test_{i}") for i in range(250)]
+
+        # Mock list_runs to return appropriate slices based on limit parameter
+        def mock_list_runs(*args, **kwargs):
+            limit = kwargs.get("limit", len(all_mock_runs))
+            return iter(all_mock_runs[:limit])
+
+        mock_client.list_runs.side_effect = mock_list_runs
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=250)
+
+        # Assert
+        assert len(runs) == 250
+        assert mock_client.list_runs.call_count == 3  # 3 pages (100 + 100 + 50)
+
+        # Verify calls were made with correct parameters
+        calls = mock_client.list_runs.call_args_list
+        # First page requests 100, second requests 200 total (to skip 100), third requests 250 total (to skip 200)
+        assert calls[0].kwargs["limit"] == 100
+        assert calls[1].kwargs["limit"] == 200
+        assert calls[2].kwargs["limit"] == 250
+
+    @patch("export_langsmith_traces.Client")
+    @patch("builtins.print")
+    def test_fetch_runs_fewer_than_requested(self, mock_print, mock_client_class):
+        """Test warning when project has fewer runs than limit."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Only 75 runs available in project
+        available_runs = [Mock(id=f"run_{i}", name=f"test_{i}") for i in range(75)]
+        mock_client.list_runs.return_value = iter(available_runs)
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act - Request 150 but only 75 available
+        runs = exporter.fetch_runs(project_name="test-project", limit=150)
+
+        # Assert
+        assert len(runs) == 75
+        # Check that warning was printed
+        warning_printed = any(
+            "Warning" in str(call) or "warning" in str(call).lower()
+            for call in mock_print.call_args_list
+        )
+        assert warning_printed, "Expected warning about fewer runs than requested"
+
+    @patch("export_langsmith_traces.Client")
+    def test_fetch_runs_empty_project(self, mock_client_class):
+        """Test handling of project with no runs."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Empty iterator
+        mock_client.list_runs.return_value = iter([])
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=100)
+
+        # Assert
+        assert len(runs) == 0
+        assert runs == []
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.time.sleep")
+    def test_fetch_runs_pagination_with_retry(self, mock_sleep, mock_client_class):
+        """Test that retry logic works during paginated fetches."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create 150 mock runs
+        all_runs = [Mock(id=f"run_{i}", name=f"test_{i}") for i in range(150)]
+
+        # First page succeeds, second page fails once then succeeds
+        call_count = [0]
+
+        def mock_list_runs(*args, **kwargs):
+            call_count[0] += 1
+            limit = kwargs.get("limit", len(all_runs))
+
+            # Second API call (page 2) fails first time
+            if call_count[0] == 2:
+                raise Exception("Rate limit exceeded")
+
+            return iter(all_runs[:limit])
+
+        mock_client.list_runs.side_effect = mock_list_runs
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=150)
+
+        # Assert
+        assert len(runs) == 150
+        # Should be called 3 times: page 1 success, page 2 fail, page 2 retry success
+        assert mock_client.list_runs.call_count == 3
+
+    @patch("export_langsmith_traces.Client")
+    @patch("export_langsmith_traces.time.sleep")
+    def test_fetch_runs_exact_page_boundary(self, mock_sleep, mock_client_class):
+        """Test fetching exactly 200 runs (2 full pages)."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create exactly 200 mock runs
+        all_mock_runs = [Mock(id=f"run_{i}", name=f"test_{i}") for i in range(200)]
+
+        def mock_list_runs(*args, **kwargs):
+            limit = kwargs.get("limit", len(all_mock_runs))
+            return iter(all_mock_runs[:limit])
+
+        mock_client.list_runs.side_effect = mock_list_runs
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=200)
+
+        # Assert
+        assert len(runs) == 200
+        assert mock_client.list_runs.call_count == 2  # Exactly 2 pages
+
+    @patch("export_langsmith_traces.Client")
+    @patch("builtins.print")
+    @patch("export_langsmith_traces.time.sleep")
+    def test_fetch_runs_shows_progress_multi_page(
+        self, mock_sleep, mock_print, mock_client_class
+    ):
+        """Test that progress messages are shown for multi-page fetches."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        all_runs = [Mock(id=f"run_{i}") for i in range(250)]
+
+        def mock_list_runs(*args, **kwargs):
+            limit = kwargs.get("limit", len(all_runs))
+            return iter(all_runs[:limit])
+
+        mock_client.list_runs.side_effect = mock_list_runs
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        runs = exporter.fetch_runs(project_name="test-project", limit=250)
+
+        # Assert
+        assert len(runs) == 250
+
+        # Check progress messages were printed
+        print_calls = [str(call) for call in mock_print.call_args_list]
+
+        # Should show pagination info or page progress
+        page_mentions = [
+            call for call in print_calls if "page" in call.lower() or "Page" in call
+        ]
+        assert len(page_mentions) > 0, "Expected pagination progress messages"
+
+
 class TestIntegration:
     """Test end-to-end integration."""
 
@@ -691,6 +893,80 @@ class TestIntegration:
             main()
 
         assert exc_info.value.code == 1
+
+    @patch("export_langsmith_traces.Client")
+    @patch("sys.argv")
+    @patch("export_langsmith_traces.time.sleep")
+    def test_main_with_pagination_success(
+        self, mock_sleep, mock_argv, mock_client_class
+    ):
+        """Test full workflow with pagination (limit > 100)."""
+        import tempfile
+        import os
+        import json
+        from export_langsmith_traces import main
+
+        # Arrange
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+            temp_output = f.name
+
+        try:
+            mock_argv.__getitem__ = Mock(
+                side_effect=lambda i: [
+                    "export_langsmith_traces.py",
+                    "--api-key",
+                    "test_key",
+                    "--project",
+                    "test-project",
+                    "--limit",
+                    "150",
+                    "--output",
+                    temp_output,
+                ][i]
+            )
+
+            mock_client = Mock()
+            mock_client_class.return_value = mock_client
+
+            # Create 150 mock runs with proper attributes (not nested Mocks)
+            all_runs = []
+            for i in range(150):
+                run = Mock()
+                run.id = f"run_{i}"
+                run.name = f"test_{i}"
+                run.start_time = None
+                run.end_time = None
+                run.status = "completed"
+                run.inputs = {}
+                run.outputs = {}
+                run.error = None
+                run.run_type = "chain"
+                run.child_runs = []
+                all_runs.append(run)
+
+            def mock_list_runs(*args, **kwargs):
+                limit = kwargs.get("limit", len(all_runs))
+                return iter(all_runs[:limit])
+
+            mock_client.list_runs.side_effect = mock_list_runs
+
+            # Act
+            main()
+
+            # Assert
+            assert os.path.exists(temp_output)
+            with open(temp_output, "r") as f:
+                data = json.load(f)
+
+            assert data["export_metadata"]["total_traces"] == 150
+            assert len(data["traces"]) == 150
+
+            # Verify multiple API calls were made (pagination)
+            assert mock_client.list_runs.call_count == 2  # 150 records = 2 pages
+
+        finally:
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
 
 
 if __name__ == "__main__":

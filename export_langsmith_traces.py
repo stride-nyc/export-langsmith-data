@@ -101,7 +101,10 @@ class LangSmithExporter:
 
     def fetch_runs(self, project_name: str, limit: int) -> List[Any]:
         """
-        Fetch runs from LangSmith with rate limiting.
+        Fetch runs from LangSmith with pagination support for large exports.
+
+        Due to LangSmith API limitations (max 100 records per call), this method
+        makes multiple API calls to fetch all requested runs.
 
         Args:
             project_name: Name or ID of the LangSmith project
@@ -114,16 +117,130 @@ class LangSmithExporter:
             ProjectNotFoundError: If project doesn't exist
             RateLimitError: If rate limit exceeded after retries
         """
+        CHUNK_SIZE = 100  # LangSmith API limit per call
+
+        all_runs = []
+        fetched_count = 0
+
+        # Calculate number of pages needed
+        num_pages = (limit + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+        # Only show pagination message if multiple pages needed
+        if num_pages > 1:
+            print(f"  📄 Fetching {limit} runs across {num_pages} pages...")
+
+        for page_num in range(num_pages):
+            # Calculate how many runs to fetch in this page
+            remaining = limit - fetched_count
+            page_size = min(CHUNK_SIZE, remaining)
+
+            # Fetch this page
+            page_runs = self._fetch_page_with_retry(
+                project_name=project_name,
+                limit=page_size,
+                fetched_so_far=fetched_count,
+                page_num=page_num + 1,
+                total_pages=num_pages,
+            )
+
+            # No more runs available
+            if len(page_runs) == 0:
+                if fetched_count == 0:
+                    # No runs at all - will be handled by caller
+                    break
+                else:
+                    # Got some runs but not all requested
+                    print(
+                        f"  ℹ️  Reached end of available runs at {fetched_count} (requested {limit})"
+                    )
+                    break
+
+            all_runs.extend(page_runs)
+            fetched_count += len(page_runs)
+
+            # Progress update for multi-page fetches
+            if num_pages > 1:
+                print(
+                    f"    ✓ Page {page_num + 1}/{num_pages}: {len(page_runs)} runs (Total: {fetched_count})"
+                )
+
+            # Check if we got fewer than requested - indicates no more runs available
+            if len(page_runs) < page_size:
+                if fetched_count < limit:
+                    print(
+                        f"  ℹ️  Only {fetched_count} runs available (requested {limit})"
+                    )
+                break
+
+            # Reached our limit
+            if fetched_count >= limit:
+                break
+
+            # Add small delay between pages (not on last page)
+            if page_num < num_pages - 1 and fetched_count < limit:
+                time.sleep(0.5)  # 500ms delay between pages
+
+        # Final warning if significantly fewer runs than requested
+        if fetched_count < limit:
+            print(f"  ⚠️  Warning: Fetched {fetched_count} runs (requested {limit})")
+
+        return all_runs
+
+    def _fetch_page_with_retry(
+        self,
+        project_name: str,
+        limit: int,
+        fetched_so_far: int,
+        page_num: int,
+        total_pages: int,
+    ) -> List[Any]:
+        """
+        Fetch a single page of runs with exponential backoff retry logic.
+
+        This method wraps the SDK's list_runs call with retry logic to handle
+        transient errors and rate limiting.
+
+        Since LangSmith SDK doesn't support offset parameter, we request all runs
+        up to our position + page size, then skip to our position using islice.
+
+        Args:
+            project_name: Name or ID of the LangSmith project
+            limit: Number of runs to fetch for this page
+            fetched_so_far: Number of runs already fetched (used for offset simulation)
+            page_num: Current page number (1-indexed, for logging)
+            total_pages: Total number of pages expected (for logging)
+
+        Returns:
+            List of Run objects from this page
+
+        Raises:
+            ProjectNotFoundError: If project doesn't exist
+            RateLimitError: If rate limit exceeded after retries
+        """
+        from itertools import islice
+
         attempt = 0
         last_exception = None
 
         while attempt < self.MAX_RETRIES:
             try:
-                # Try with project_name parameter first
-                runs = list(
-                    self.client.list_runs(project_name=project_name, limit=limit)
+                # Since LangSmith SDK doesn't support offset parameter,
+                # we request all runs up to our position + page size,
+                # then skip to our position using islice
+                total_to_request = fetched_so_far + limit
+
+                # Try with project_name first
+                runs_iterator = self.client.list_runs(
+                    project_name=project_name, limit=total_to_request
                 )
-                return runs
+
+                # Skip already-fetched runs and take the next page
+                page_runs = list(
+                    islice(runs_iterator, fetched_so_far, fetched_so_far + limit)
+                )
+
+                return page_runs
+
             except Exception as e:
                 last_exception = e
                 error_msg = str(e).lower()
@@ -137,12 +254,17 @@ class LangSmithExporter:
                     if self._looks_like_uuid(project_name):
                         print("Trying project ID instead of name...")
                         try:
-                            runs = list(
-                                self.client.list_runs(
-                                    project_id=project_name, limit=limit
+                            runs_iterator = self.client.list_runs(
+                                project_id=project_name, limit=total_to_request
+                            )
+                            page_runs = list(
+                                islice(
+                                    runs_iterator,
+                                    fetched_so_far,
+                                    fetched_so_far + limit,
                                 )
                             )
-                            return runs
+                            return page_runs
                         except Exception:  # nosec B110
                             pass  # Intentional: Fall through to retry logic if project_id also fails
 
@@ -158,15 +280,23 @@ class LangSmithExporter:
                 attempt += 1
                 if attempt >= self.MAX_RETRIES:
                     break
+
                 # Exponential backoff
                 backoff_time = self.INITIAL_BACKOFF * (
                     self.BACKOFF_MULTIPLIER ** (attempt - 1)
                 )
+
+                # Only show retry message for multi-page fetches
+                if total_pages > 1:
+                    print(
+                        f"    ⚠️  Page {page_num}/{total_pages} failed (attempt {attempt}/{self.MAX_RETRIES}), retrying in {backoff_time:.1f}s..."
+                    )
+
                 time.sleep(backoff_time)
 
         # If we get here, all retries failed
         raise RateLimitError(
-            f"Failed to fetch runs after {self.MAX_RETRIES} attempts. "
+            f"Failed to fetch page {page_num}/{total_pages} after {self.MAX_RETRIES} attempts. "
             f"Last error: {str(last_exception)}"
         ) from last_exception
 
@@ -423,7 +553,11 @@ def main() -> None:
         try:
             print("📥 Fetching traces...")
             runs = exporter.fetch_runs(project_name=args.project, limit=args.limit)
-            print(f"✓ Fetched {len(runs)} traces")
+            # fetch_runs now provides progress updates, so adjust final message
+            if len(runs) != args.limit:
+                print(f"✓ Fetched {len(runs)} traces (requested {args.limit})")
+            else:
+                print(f"✓ Fetched {len(runs)} traces")
 
             if len(runs) == 0:
                 print("⚠️  No traces found in project")
