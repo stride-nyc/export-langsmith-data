@@ -9,13 +9,14 @@ This Python script exports trace data from LangSmith using the SDK API, designed
 ## Features
 
 - Export N most recent traces from any LangSmith project
+- **Automatic pagination** - Handles large exports (> 100 records) seamlessly with progress indication
 - **Environment variable support** - Configure once via `.env` file for simplified usage
 - Automatic rate limiting with exponential backoff
 - Progress indication for long-running exports
 - Comprehensive error handling (auth, network, rate limits)
 - Structured JSON output with metadata
 - Type-safe implementation with full type hints
-- Test-driven development with pytest suite (25 tests, 86% coverage)
+- Test-driven development with pytest suite (33 tests, high coverage)
 
 ## Requirements
 
@@ -114,8 +115,10 @@ python export_langsmith_traces.py \
 ### Parameters
 
 - `--api-key` (optional): LangSmith API key for authentication (default: `LANGSMITH_API_KEY` env var)
-- `--project` (optional): LangSmith project name or ID (default: `LANGSMITH_PROJECT` env var)  
+- `--project` (optional): LangSmith project name or ID (default: `LANGSMITH_PROJECT` env var)
 - `--limit` (optional): Number of most recent traces to export (default: `LANGSMITH_LIMIT` env var)
+  - For limits > 100, the tool automatically handles pagination across multiple API calls
+  - If fewer records exist in the project, you'll receive a warning and all available records
 - `--output` (required): Output JSON file path
 
 **Note**: While the CLI arguments are now optional, the values must be provided either via command line or environment variables.
@@ -149,6 +152,45 @@ python export_langsmith_traces.py \
   --limit 500 \
   --output "large_export.json"
 ```
+
+## Pagination for Large Exports
+
+The LangSmith API limits results to 100 records per call. This tool automatically handles pagination for larger exports with progress indication:
+
+**Example: Exporting 500 records**
+```bash
+python export_langsmith_traces.py --limit 500 --output large_export.json
+```
+
+**Output:**
+```
+🚀 Exporting 500 traces from project 'my-project'...
+✓ Connected to LangSmith API
+📥 Fetching traces...
+  📄 Fetching 500 runs across 5 pages...
+    ✓ Page 1/5: 100 runs (Total: 100)
+    ✓ Page 2/5: 100 runs (Total: 200)
+    ✓ Page 3/5: 100 runs (Total: 300)
+    ✓ Page 4/5: 100 runs (Total: 400)
+    ✓ Page 5/5: 100 runs (Total: 500)
+✓ Fetched 500 traces
+🔄 Formatting trace data...
+✓ Data formatted
+💾 Exporting to large_export.json...
+✅ Export complete! Saved to large_export.json
+```
+
+**If Project Has Fewer Records:**
+```
+⚠️  Warning: Fetched 250 runs (requested 500)
+```
+
+**Pagination Features:**
+- Automatic chunking into 100-record pages
+- Progress indication for multi-page exports
+- Rate limiting between pages (500ms delay)
+- Retry logic per page for reliability
+- Warning when fewer records available than requested
 
 ## Output Format
 
@@ -227,6 +269,7 @@ All core features implemented and tested:
 - ✅ Dependencies configuration with CI/CD quality gates
 - ✅ CLI argument parsing with validation
 - ✅ **Environment variable support** - Optional `.env` file configuration for simplified usage
+- ✅ **Automatic pagination** - Handles API 100-record limit with multi-page fetching and progress indication
 - ✅ LangSmith client initialization with authentication
 - ✅ Run fetching with exponential backoff rate limiting
 - ✅ Data formatting and transformation with safe field extraction
@@ -234,7 +277,7 @@ All core features implemented and tested:
 - ✅ Comprehensive error scenario handling
 - ✅ Main orchestration with user-friendly progress feedback
 - ✅ End-to-end integration testing
-- ✅ Test suite: 25 tests, 86% coverage
+- ✅ Test suite: 33 tests (25 original + 8 pagination tests), high coverage
 - ✅ Code quality: Black, Ruff, mypy, Bandit, Safety checks passing
 
 ### Optional Features Not Implemented
