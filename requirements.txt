@@ -2,6 +2,7 @@
 
 # Core dependencies
 langsmith>=0.1.0
+numpy>=1.24.0  # For percentile calculations in analysis
 
 # Optional dependencies
 tqdm>=4.66.0  # Progress bar for long exports

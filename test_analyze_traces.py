@@ -357,5 +357,180 @@ class TestLoadFromJSON:
             os.remove(temp_path)
 
 
+class TestLatencyDistribution:
+    """Test latency distribution analysis (Phase 2)."""
+
+    def test_latency_distribution_dataclass_creation(self):
+        """Test creating a LatencyDistribution with all fields."""
+        from analyze_traces import LatencyDistribution
+
+        # Arrange & Act
+        dist = LatencyDistribution(
+            p50_minutes=15.0,
+            p95_minutes=22.0,
+            p99_minutes=25.0,
+            min_minutes=8.0,
+            max_minutes=27.0,
+            mean_minutes=16.5,
+            std_dev_minutes=5.2,
+            outliers_above_23min=["trace-1", "trace-2"],
+            outliers_below_7min=[],
+            percent_within_7_23_claim=85.0,
+        )
+
+        # Assert
+        assert dist.p50_minutes == 15.0
+        assert dist.p95_minutes == 22.0
+        assert len(dist.outliers_above_23min) == 2
+        assert dist.percent_within_7_23_claim == 85.0
+
+    def test_analyze_latency_distribution_basic(self):
+        """Test basic latency distribution analysis with valid workflows."""
+        from analyze_traces import (
+            Trace,
+            Workflow,
+            analyze_latency_distribution,
+        )
+
+        # Arrange - Create test workflows with various durations
+        workflows = []
+        durations_seconds = [
+            600,  # 10 min
+            900,  # 15 min
+            1200,  # 20 min
+            300,  # 5 min (below 7 min)
+            1500,  # 25 min (above 23 min)
+        ]
+
+        for i, duration in enumerate(durations_seconds):
+            root = Trace(
+                id=f"root-{i}",
+                name="LangGraph",
+                start_time=None,
+                end_time=None,
+                duration_seconds=duration,
+                status="success",
+                run_type="chain",
+                parent_id=None,
+                child_ids=[],
+                inputs={},
+                outputs={},
+                error=None,
+            )
+            workflow = Workflow(root_trace=root, nodes={}, all_traces=[root])
+            workflows.append(workflow)
+
+        # Act
+        result = analyze_latency_distribution(workflows)
+
+        # Assert
+        assert result.p50_minutes == 15.0  # Median of [5, 10, 15, 20, 25]
+        assert result.min_minutes == 5.0
+        assert result.max_minutes == 25.0
+        assert len(result.outliers_below_7min) == 1  # 5 min trace
+        assert len(result.outliers_above_23min) == 1  # 25 min trace
+
+    def test_analyze_latency_distribution_filters_zero_duration(self):
+        """Test that zero-duration workflows are filtered out."""
+        from analyze_traces import (
+            Trace,
+            Workflow,
+            analyze_latency_distribution,
+        )
+
+        # Arrange - Mix of valid and zero-duration workflows
+        workflows = []
+
+        # Valid workflow
+        valid_root = Trace(
+            id="valid-1",
+            name="LangGraph",
+            start_time=None,
+            end_time=None,
+            duration_seconds=600.0,  # 10 min
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+        workflows.append(
+            Workflow(root_trace=valid_root, nodes={}, all_traces=[valid_root])
+        )
+
+        # Zero-duration workflow (should be filtered)
+        zero_root = Trace(
+            id="zero-1",
+            name="LangGraph",
+            start_time=None,
+            end_time=None,
+            duration_seconds=0.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+        workflows.append(
+            Workflow(root_trace=zero_root, nodes={}, all_traces=[zero_root])
+        )
+
+        # Act
+        result = analyze_latency_distribution(workflows)
+
+        # Assert - Should only analyze the valid workflow
+        assert result.min_minutes == 10.0
+        assert result.max_minutes == 10.0
+
+    def test_analyze_latency_distribution_calculates_percentiles(self):
+        """Test that p50, p95, p99 percentiles are calculated correctly."""
+        from analyze_traces import (
+            Trace,
+            Workflow,
+            analyze_latency_distribution,
+        )
+
+        # Arrange - Create 100 workflows with durations from 10-20 minutes
+        workflows = []
+        for i in range(100):
+            duration_seconds = 600 + (i * 6)  # 10-19.9 minutes
+            root = Trace(
+                id=f"root-{i}",
+                name="LangGraph",
+                start_time=None,
+                end_time=None,
+                duration_seconds=duration_seconds,
+                status="success",
+                run_type="chain",
+                parent_id=None,
+                child_ids=[],
+                inputs={},
+                outputs={},
+                error=None,
+            )
+            workflow = Workflow(root_trace=root, nodes={}, all_traces=[root])
+            workflows.append(workflow)
+
+        # Act
+        result = analyze_latency_distribution(workflows)
+
+        # Assert - Check percentiles are reasonable
+        assert 10 <= result.p50_minutes <= 20
+        assert result.p50_minutes < result.p95_minutes < result.p99_minutes
+        assert result.min_minutes <= result.p50_minutes <= result.max_minutes
+
+    def test_analyze_latency_distribution_empty_workflows(self):
+        """Test handling of empty workflow list."""
+        from analyze_traces import analyze_latency_distribution
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="No valid workflows"):
+            analyze_latency_distribution([])
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

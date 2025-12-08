@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 import json
 from pathlib import Path
+import numpy as np
 
 
 @dataclass
@@ -253,4 +254,105 @@ def load_from_json(filepath: str) -> TraceDataset:
         orphan_traces=orphan_traces,
         metadata=metadata,
         is_hierarchical=is_hierarchical,
+    )
+
+
+# ============================================================================
+# Phase 2: Latency Distribution Analysis
+# ============================================================================
+
+
+@dataclass
+class LatencyDistribution:
+    """
+    Results of latency distribution analysis for workflows.
+
+    Attributes:
+        p50_minutes: 50th percentile (median) latency in minutes
+        p95_minutes: 95th percentile latency in minutes
+        p99_minutes: 99th percentile latency in minutes
+        min_minutes: Minimum workflow duration in minutes
+        max_minutes: Maximum workflow duration in minutes
+        mean_minutes: Average workflow duration in minutes
+        std_dev_minutes: Standard deviation of workflow durations
+        outliers_above_23min: List of workflow IDs above 23 minutes
+        outliers_below_7min: List of workflow IDs below 7 minutes
+        percent_within_7_23_claim: Percentage of workflows within 7-23 min range
+    """
+
+    p50_minutes: float
+    p95_minutes: float
+    p99_minutes: float
+    min_minutes: float
+    max_minutes: float
+    mean_minutes: float
+    std_dev_minutes: float
+    outliers_above_23min: List[str]
+    outliers_below_7min: List[str]
+    percent_within_7_23_claim: float
+
+
+def analyze_latency_distribution(workflows: List[Workflow]) -> LatencyDistribution:
+    """
+    Analyze latency distribution across workflows.
+
+    Calculates percentiles, identifies outliers, and validates the
+    claimed "7-23 minutes" workflow execution timeframe.
+
+    Args:
+        workflows: List of Workflow objects to analyze
+
+    Returns:
+        LatencyDistribution with calculated metrics
+
+    Raises:
+        ValueError: If no valid workflows are provided
+    """
+    # Filter out zero-duration workflows (incomplete/errored)
+    valid_workflows = [w for w in workflows if w.total_duration > 0]
+
+    if not valid_workflows:
+        raise ValueError("No valid workflows to analyze (all have zero duration)")
+
+    # Extract durations in minutes
+    durations_minutes = np.array([w.total_duration / 60.0 for w in valid_workflows])
+
+    # Calculate percentiles
+    p50 = float(np.percentile(durations_minutes, 50))
+    p95 = float(np.percentile(durations_minutes, 95))
+    p99 = float(np.percentile(durations_minutes, 99))
+
+    # Calculate basic statistics
+    min_val = float(np.min(durations_minutes))
+    max_val = float(np.max(durations_minutes))
+    mean_val = float(np.mean(durations_minutes))
+    std_dev = float(np.std(durations_minutes))
+
+    # Identify outliers
+    outliers_above = []
+    outliers_below = []
+    within_claim = 0
+
+    for workflow, duration_min in zip(valid_workflows, durations_minutes):
+        if duration_min > 23.0:
+            outliers_above.append(workflow.root_trace.id)
+        elif duration_min < 7.0:
+            outliers_below.append(workflow.root_trace.id)
+        else:
+            within_claim += 1
+
+    # Calculate percentage within claimed range
+    percent_within = (within_claim / len(valid_workflows)) * 100.0
+
+    return LatencyDistribution(
+        p50_minutes=p50,
+        p95_minutes=p95,
+        p99_minutes=p99,
+        min_minutes=min_val,
+        max_minutes=max_val,
+        mean_minutes=mean_val,
+        std_dev_minutes=std_dev,
+        outliers_above_23min=outliers_above,
+        outliers_below_7min=outliers_below,
+        percent_within_7_23_claim=percent_within,
     )
