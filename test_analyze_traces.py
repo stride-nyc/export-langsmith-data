@@ -794,5 +794,342 @@ class TestBottleneckIdentification:
         assert result.top_3_bottlenecks == []
 
 
+class TestParallelExecutionVerification:
+    """Test parallel execution verification analysis (Phase 4)."""
+
+    def test_parallel_execution_evidence_dataclass_creation(self):
+        """Test creating a ParallelExecutionEvidence with all fields."""
+        from analyze_traces import ParallelExecutionEvidence
+
+        # Arrange & Act
+        evidence = ParallelExecutionEvidence(
+            parallel_confirmed_count=85,
+            sequential_count=10,
+            avg_start_time_delta_seconds=2.5,
+            avg_sequential_time_seconds=600.0,
+            avg_parallel_time_seconds=350.0,
+            avg_time_savings_seconds=250.0,
+            is_parallel=True,
+            confidence="high",
+        )
+
+        # Assert
+        assert evidence.parallel_confirmed_count == 85
+        assert evidence.sequential_count == 10
+        assert evidence.is_parallel is True
+        assert evidence.confidence == "high"
+        assert evidence.avg_time_savings_seconds == 250.0
+
+    def test_verify_parallel_execution_detects_parallel(self):
+        """Test detection of parallel validator execution."""
+        from analyze_traces import Trace, Workflow, verify_parallel_execution
+
+        # Arrange - Workflow with 3 validators starting at nearly same time
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 10, 0, tzinfo=timezone.utc),
+            duration_seconds=600.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["val-1", "val-2", "val-3"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        # All validators start within 2 seconds of each other (parallel)
+        validator1 = Trace(
+            id="val-1",
+            name="meta_evaluation",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+            duration_seconds=120.0,
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        validator2 = Trace(
+            id="val-2",
+            name="normative_validation",
+            start_time=datetime(2025, 1, 1, 12, 1, 1, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 10, tzinfo=timezone.utc),
+            duration_seconds=130.0,
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        validator3 = Trace(
+            id="val-3",
+            name="simulated_testing",
+            start_time=datetime(2025, 1, 1, 12, 1, 2, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 20, tzinfo=timezone.utc),
+            duration_seconds=140.0,
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={
+                "meta_evaluation": [validator1],
+                "normative_validation": [validator2],
+                "simulated_testing": [validator3],
+            },
+            all_traces=[root, validator1, validator2, validator3],
+        )
+
+        # Act
+        result = verify_parallel_execution([workflow])
+
+        # Assert
+        assert result.is_parallel is True
+        assert result.parallel_confirmed_count == 1
+        assert result.sequential_count == 0
+        assert result.avg_start_time_delta_seconds < 5.0  # Started within 5 seconds
+
+    def test_verify_parallel_execution_detects_sequential(self):
+        """Test detection of sequential validator execution."""
+        from analyze_traces import Trace, Workflow, verify_parallel_execution
+
+        # Arrange - Workflow with validators running sequentially
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 10, 0, tzinfo=timezone.utc),
+            duration_seconds=600.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["val-1", "val-2", "val-3"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        # Validators start sequentially (>5 seconds apart)
+        validator1 = Trace(
+            id="val-1",
+            name="meta_evaluation",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+            duration_seconds=120.0,
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        validator2 = Trace(
+            id="val-2",
+            name="normative_validation",
+            start_time=datetime(2025, 1, 1, 12, 3, 10, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 5, 20, tzinfo=timezone.utc),
+            duration_seconds=130.0,
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        validator3 = Trace(
+            id="val-3",
+            name="simulated_testing",
+            start_time=datetime(2025, 1, 1, 12, 5, 30, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 7, 50, tzinfo=timezone.utc),
+            duration_seconds=140.0,
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={
+                "meta_evaluation": [validator1],
+                "normative_validation": [validator2],
+                "simulated_testing": [validator3],
+            },
+            all_traces=[root, validator1, validator2, validator3],
+        )
+
+        # Act
+        result = verify_parallel_execution([workflow])
+
+        # Assert
+        assert result.is_parallel is False
+        assert result.parallel_confirmed_count == 0
+        assert result.sequential_count == 1
+
+    def test_verify_parallel_execution_calculates_time_savings(self):
+        """Test calculation of time savings from parallel execution."""
+        from analyze_traces import Trace, Workflow, verify_parallel_execution
+
+        # Arrange - Parallel execution with known durations
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 10, 0, tzinfo=timezone.utc),
+            duration_seconds=600.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["val-1", "val-2", "val-3"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        validator1 = Trace(
+            id="val-1",
+            name="meta_evaluation",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+            duration_seconds=100.0,  # 100s
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        validator2 = Trace(
+            id="val-2",
+            name="normative_validation",
+            start_time=datetime(2025, 1, 1, 12, 1, 1, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 51, tzinfo=timezone.utc),
+            duration_seconds=150.0,  # 150s (longest)
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        validator3 = Trace(
+            id="val-3",
+            name="simulated_testing",
+            start_time=datetime(2025, 1, 1, 12, 1, 2, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 22, tzinfo=timezone.utc),
+            duration_seconds=120.0,  # 120s
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={
+                "meta_evaluation": [validator1],
+                "normative_validation": [validator2],
+                "simulated_testing": [validator3],
+            },
+            all_traces=[root, validator1, validator2, validator3],
+        )
+
+        # Act
+        result = verify_parallel_execution([workflow])
+
+        # Assert
+        # Sequential time = 100 + 150 + 120 = 370s
+        # Parallel time = max(100, 150, 120) = 150s
+        # Time savings = 370 - 150 = 220s
+        assert result.avg_sequential_time_seconds == 370.0
+        assert result.avg_parallel_time_seconds == 150.0
+        assert result.avg_time_savings_seconds == 220.0
+
+    def test_verify_parallel_execution_empty_workflows(self):
+        """Test handling of empty workflow list."""
+        from analyze_traces import verify_parallel_execution
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="No valid workflows"):
+            verify_parallel_execution([])
+
+    def test_verify_parallel_execution_workflows_without_validators(self):
+        """Test handling workflows without validator nodes."""
+        from analyze_traces import Trace, Workflow, verify_parallel_execution
+
+        # Arrange - Workflow with no validator nodes
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 10, 0, tzinfo=timezone.utc),
+            duration_seconds=600.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["node-1"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        node1 = Trace(
+            id="node-1",
+            name="generate_spec",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+            duration_seconds=120.0,
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root, nodes={"generate_spec": [node1]}, all_traces=[root, node1]
+        )
+
+        # Act
+        result = verify_parallel_execution([workflow])
+
+        # Assert - Should return inconclusive results
+        assert result.parallel_confirmed_count == 0
+        assert result.sequential_count == 0
+        assert result.confidence == "none"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

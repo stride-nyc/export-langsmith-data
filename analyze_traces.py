@@ -480,3 +480,160 @@ def identify_bottlenecks(workflows: List[Workflow]) -> BottleneckAnalysis:
         primary_bottleneck=primary_bottleneck,
         top_3_bottlenecks=top_3_bottlenecks,
     )
+
+
+# ============================================================================
+# Phase 4: Parallel Execution Verification
+# ============================================================================
+
+
+@dataclass
+class ParallelExecutionEvidence:
+    """
+    Evidence for parallel vs sequential validator execution.
+
+    Attributes:
+        parallel_confirmed_count: Number of workflows with parallel execution
+        sequential_count: Number of workflows with sequential execution
+        avg_start_time_delta_seconds: Average time difference between validator starts
+        avg_sequential_time_seconds: Average time if validators ran sequentially
+        avg_parallel_time_seconds: Average time with parallel execution
+        avg_time_savings_seconds: Average time saved by parallel execution
+        is_parallel: True if majority of workflows show parallel execution
+        confidence: Confidence level ('high', 'medium', 'low', 'none')
+    """
+
+    parallel_confirmed_count: int
+    sequential_count: int
+    avg_start_time_delta_seconds: float
+    avg_sequential_time_seconds: float
+    avg_parallel_time_seconds: float
+    avg_time_savings_seconds: float
+    is_parallel: bool
+    confidence: str
+
+
+# Validator node names to detect
+VALIDATOR_NAMES = {"meta_evaluation", "normative_validation", "simulated_testing"}
+
+# Threshold for parallel detection (seconds)
+PARALLEL_START_THRESHOLD = 5.0  # Validators starting within 5s = parallel
+
+
+def verify_parallel_execution(workflows: List[Workflow]) -> ParallelExecutionEvidence:
+    """
+    Verify whether validator nodes execute in parallel across workflows.
+
+    Analyzes validator start times to determine if the three validators
+    (meta_evaluation, normative_validation, simulated_testing) run in
+    parallel or sequential mode, and calculates time savings.
+
+    Args:
+        workflows: List of Workflow objects to analyze
+
+    Returns:
+        ParallelExecutionEvidence with parallel execution metrics
+
+    Raises:
+        ValueError: If no valid workflows are provided
+    """
+    if not workflows:
+        raise ValueError("No valid workflows to analyze (empty list)")
+
+    parallel_count = 0
+    sequential_count = 0
+    all_start_deltas: List[float] = []
+    all_sequential_times: List[float] = []
+    all_parallel_times: List[float] = []
+    all_time_savings: List[float] = []
+
+    for workflow in workflows:
+        # Find validator nodes
+        validator_traces: List[Trace] = []
+        for node_name, traces in workflow.nodes.items():
+            if node_name in VALIDATOR_NAMES:
+                validator_traces.extend(traces)
+
+        # Skip workflows without validators
+        if len(validator_traces) < 2:
+            continue
+
+        # Check if all validators have start times
+        if not all(t.start_time is not None for t in validator_traces):
+            continue
+
+        # Sort validators by start time
+        sorted_validators = sorted(validator_traces, key=lambda t: t.start_time)  # type: ignore
+
+        # Calculate start time deltas
+        start_times = [t.start_time for t in sorted_validators]
+        first_start = start_times[0]
+        last_start = start_times[-1]
+
+        # Calculate max delta between first and last validator start
+        start_delta = (last_start - first_start).total_seconds()  # type: ignore
+        all_start_deltas.append(start_delta)
+
+        # Calculate sequential vs parallel time
+        durations = [t.duration_seconds for t in validator_traces]
+        sequential_time = sum(durations)  # Sum if sequential
+        parallel_time = max(durations)  # Max if parallel
+        time_savings = sequential_time - parallel_time
+
+        all_sequential_times.append(sequential_time)
+        all_parallel_times.append(parallel_time)
+        all_time_savings.append(time_savings)
+
+        # Determine if this workflow shows parallel execution
+        if start_delta <= PARALLEL_START_THRESHOLD:
+            parallel_count += 1
+        else:
+            sequential_count += 1
+
+    # Handle case where no workflows had validators
+    if parallel_count == 0 and sequential_count == 0:
+        return ParallelExecutionEvidence(
+            parallel_confirmed_count=0,
+            sequential_count=0,
+            avg_start_time_delta_seconds=0.0,
+            avg_sequential_time_seconds=0.0,
+            avg_parallel_time_seconds=0.0,
+            avg_time_savings_seconds=0.0,
+            is_parallel=False,
+            confidence="none",
+        )
+
+    # Calculate averages
+    avg_start_delta = float(np.mean(all_start_deltas)) if all_start_deltas else 0.0
+    avg_sequential_time = (
+        float(np.mean(all_sequential_times)) if all_sequential_times else 0.0
+    )
+    avg_parallel_time = (
+        float(np.mean(all_parallel_times)) if all_parallel_times else 0.0
+    )
+    avg_time_savings = float(np.mean(all_time_savings)) if all_time_savings else 0.0
+
+    # Determine overall parallel verdict
+    total_workflows = parallel_count + sequential_count
+    is_parallel = parallel_count > sequential_count
+
+    # Determine confidence level
+    if total_workflows == 0:
+        confidence = "none"
+    elif parallel_count == total_workflows or sequential_count == total_workflows:
+        confidence = "high"  # All workflows show same pattern
+    elif max(parallel_count, sequential_count) / total_workflows >= 0.8:
+        confidence = "medium"  # 80%+ consistency
+    else:
+        confidence = "low"  # Mixed results
+
+    return ParallelExecutionEvidence(
+        parallel_confirmed_count=parallel_count,
+        sequential_count=sequential_count,
+        avg_start_time_delta_seconds=avg_start_delta,
+        avg_sequential_time_seconds=avg_sequential_time,
+        avg_parallel_time_seconds=avg_parallel_time,
+        avg_time_savings_seconds=avg_time_savings,
+        is_parallel=is_parallel,
+        confidence=confidence,
+    )
