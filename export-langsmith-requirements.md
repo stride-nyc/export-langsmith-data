@@ -1,7 +1,7 @@
 # LangSmith Data Export Script - Requirements
 
 ## Purpose
-Export workflow trace data from Neota's LangSmith project for offline analysis.
+Export workflow trace data from LangSmith projects for offline analysis.
 
 ## Constraints
 - **LangSmith Plan:** Individual Developer (no bulk export feature available)
@@ -10,7 +10,7 @@ Export workflow trace data from Neota's LangSmith project for offline analysis.
 - **Rate Limiting:** Must respect LangSmith API rate limits (throttle requests if needed)
 
 ## Required Inputs
-1. **LangSmith API Key:** Authentication credential (provided by Neota engineer)
+1. **LangSmith API Key:** Authentication credential
 2. **Project Name/ID:** LangSmith project identifier
 3. **Number of Traces:** Count of most recent traces to export (N parameter)
 4. **Optional Filters:** Date range, status filters (if needed)
@@ -111,7 +111,7 @@ Export workflow trace data from Neota's LangSmith project for offline analysis.
 ```python
 python export_langsmith_traces.py \
   --api-key "lsv2_pt_..." \
-  --project "neota-aesp-project" \
+  --project "your-project-name" \
   --limit 150 \
   --output "traces_export.json"
 ```

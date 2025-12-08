@@ -1,16 +1,22 @@
-# LangSmith Data Export Script
+# LangSmith Data Export & Analysis Tools
 
-Export workflow trace data from LangSmith projects for offline analysis and review.
+Export and analyze workflow trace data from LangSmith projects for performance insights and optimization.
 
 ## Overview
 
-This Python script exports trace data from LangSmith using the SDK API, designed for users on Individual Developer plans without bulk export features. It provides robust error handling, rate limiting, and progress feedback for reliable data exports.
+This toolkit provides two main capabilities:
+1. **Data Export** (`export_langsmith_traces.py`) - Export trace data from LangSmith using the SDK API
+2. **Performance Analysis** (`analyze_traces.py`) - Analyze exported traces for latency, bottlenecks, and parallel execution
+
+Designed for users on Individual Developer plans without bulk export features, with robust error handling, rate limiting, and comprehensive analysis capabilities.
 
 ## Features
 
+### Data Export (`export_langsmith_traces.py`)
 - Export N most recent traces from any LangSmith project
 - **Automatic pagination** - Handles large exports (> 100 records) seamlessly with progress indication
 - **Environment variable support** - Configure once via `.env` file for simplified usage
+- **Hierarchical data export** - Includes child_runs with `--include-children` flag
 - Automatic rate limiting with exponential backoff
 - Progress indication for long-running exports
 - Comprehensive error handling (auth, network, rate limits)
@@ -18,11 +24,20 @@ This Python script exports trace data from LangSmith using the SDK API, designed
 - Type-safe implementation with full type hints
 - Test-driven development with pytest suite (33 tests, high coverage)
 
+### Performance Analysis (`analyze_traces.py`)
+- **Latency Distribution Analysis** - Calculate p50/p95/p99 percentiles, identify outliers
+- **Bottleneck Identification** - Rank nodes by execution time, identify primary bottlenecks
+- **Parallel Execution Verification** - Detect parallel vs sequential execution, calculate time savings
+- **CSV Export** - Export analysis results to CSV files for reporting
+- **Interactive Jupyter Notebook** - Visual analysis workflow with automated reporting
+- 31 comprehensive tests, 100% type-safe with mypy strict mode
+
 ## Requirements
 
 - Python 3.8 or higher
 - LangSmith API key (Individual Developer plan or higher)
 - Virtual environment manager (uv or venv)
+- Additional packages: numpy (for analysis), jupyter (for notebook)
 
 ## Installation
 
@@ -74,6 +89,8 @@ LANGSMITH_API_KEY=lsv2_pt_your_api_key_here
 Get your API key from: https://smith.langchain.com/settings
 
 ## Usage
+
+## Part 1: Data Export
 
 ### Option 1: Using Environment Variables (Recommended)
 
@@ -129,20 +146,20 @@ python export_langsmith_traces.py \
 ```bash
 # Set up .env file once
 echo "LANGSMITH_API_KEY=lsv2_pt_abc123..." >> .env
-echo "LANGSMITH_PROJECT=neota-aesp-project" >> .env
+echo "LANGSMITH_PROJECT=your-project-name" >> .env
 echo "LANGSMITH_LIMIT=200" >> .env
 
 # Simple usage
-python export_langsmith_traces.py --output "neota_traces_2025-11-28.json"
+python export_langsmith_traces.py --output "traces_2025-11-28.json"
 ```
 
 **Using CLI arguments:**
 ```bash
 python export_langsmith_traces.py \
   --api-key "lsv2_pt_abc123..." \
-  --project "neota-aesp-project" \
+  --project "your-project-name" \
   --limit 200 \
-  --output "neota_traces_2025-11-28.json"
+  --output "traces_2025-11-28.json"
 ```
 
 **Mixed usage:**
@@ -192,7 +209,123 @@ python export_langsmith_traces.py --limit 500 --output large_export.json
 - Retry logic per page for reliability
 - Warning when fewer records available than requested
 
-## Output Format
+## Part 2: Performance Analysis
+
+Once you have exported trace data, use the analysis tools to gain performance insights.
+
+### Quick Start with Jupyter Notebook (Recommended)
+
+1. **Export trace data with hierarchical information:**
+   ```bash
+   python export_langsmith_traces.py \
+     --limit 100 \
+     --output traces_export.json \
+     --include-children
+   ```
+
+2. **Launch Jupyter notebook:**
+   ```bash
+   jupyter notebook notebooks/langsmith_trace_performance_analysis.ipynb
+   ```
+
+3. **Update the file path** in cell 2 to point to your export file
+
+4. **Run all cells** to generate:
+   - Latency distribution metrics (p50/p95/p99)
+   - Bottleneck analysis with node rankings
+   - Parallel execution verification
+   - CSV exports in `output/` directory
+
+### Using Python API Directly
+
+You can also use the analysis functions programmatically:
+
+```python
+from analyze_traces import (
+    load_from_json,
+    analyze_latency_distribution,
+    identify_bottlenecks,
+    verify_parallel_execution,
+)
+
+# Load exported trace data
+dataset = load_from_json("traces_export.json")
+
+# Analyze latency distribution
+latency = analyze_latency_distribution(dataset.workflows)
+print(f"p50: {latency.p50_minutes:.1f} min")
+print(f"p95: {latency.p95_minutes:.1f} min")
+print(f"Outliers above 23 min: {len(latency.outliers_above_23min)}")
+
+# Identify bottlenecks
+bottlenecks = identify_bottlenecks(dataset.workflows)
+print(f"Primary bottleneck: {bottlenecks.primary_bottleneck}")
+for node in bottlenecks.node_performances[:5]:
+    print(f"  {node.node_name}: {node.avg_duration_seconds:.1f}s")
+
+# Verify parallel execution
+parallel = verify_parallel_execution(dataset.workflows)
+print(f"Parallel execution: {parallel.is_parallel}")
+print(f"Time savings: {parallel.avg_time_savings_seconds:.1f}s")
+
+# Export to CSV
+with open("output/latency.csv", "w") as f:
+    f.write(latency.to_csv())
+```
+
+### Analysis Output Files
+
+The analysis generates CSV files in the `output/` directory:
+
+1. **`latency_distribution.csv`** - Percentile metrics and outlier analysis
+   - p50/p95/p99 latency values
+   - Min/max/mean/std_dev statistics
+   - Outlier counts (>23 min, <7 min)
+   - % within claimed 7-23 minute range
+
+2. **`bottleneck_analysis.csv`** - Node-level performance breakdown
+   - Node name, execution count
+   - Average/median duration, std deviation
+   - % of total workflow time
+   - Total time across all workflows
+
+3. **`parallel_execution_analysis.csv`** - Parallel execution evidence
+   - Parallel vs sequential workflow counts
+   - Average start time deltas
+   - Time savings calculation
+   - Confidence level assessment
+
+## Validating Exports
+
+After exporting data, use the validation utility to check data quality and statistical validity:
+
+```bash
+python validate_export.py traces_export.json
+```
+
+The validator provides:
+- **Dataset overview**: Workflow counts, hierarchical data status
+- **Workflow statistics**: Validator presence, duration stats, unique nodes
+- **Statistical validity assessment**: Sample size adequacy for each analysis type
+- **Recommendations**: Whether the dataset is ready for analysis
+
+**Example output:**
+```
+DATASET OVERVIEW
+  Total workflows:        384
+  Hierarchical data:      Yes
+  Workflows with validators: 15
+
+STATISTICAL VALIDITY ASSESSMENT
+  Latency Analysis:       EXCELLENT (n >= 100)
+  Bottleneck Analysis:    EXCELLENT (n >= 100)
+  Parallel Analysis:      WEAK (10 <= n < 20, low confidence)
+
+RECOMMENDATION
+  Status: READY FOR COMPREHENSIVE ANALYSIS
+```
+
+## Export Output Format
 
 The script generates a JSON file with the following structure:
 
@@ -226,8 +359,9 @@ The script generates a JSON file with the following structure:
 
 ### Running Tests
 
+**Export module tests (33 tests):**
 ```bash
-# Run all tests
+# Run all export tests
 pytest test_export_langsmith_traces.py -v
 
 # Run specific test class
@@ -237,18 +371,48 @@ pytest test_export_langsmith_traces.py::TestArgumentParsing -v
 pytest --cov=export_langsmith_traces test_export_langsmith_traces.py
 ```
 
+**Analysis module tests (31 tests):**
+```bash
+# Run all analysis tests
+pytest test_analyze_traces.py -v
+
+# Run specific phase tests
+pytest test_analyze_traces.py::TestLatencyDistribution -v
+pytest test_analyze_traces.py::TestBottleneckIdentification -v
+pytest test_analyze_traces.py::TestParallelExecutionVerification -v
+pytest test_analyze_traces.py::TestCSVExport -v
+
+# Run with coverage
+pytest --cov=analyze_traces test_analyze_traces.py
+```
+
+**Run all tests:**
+```bash
+pytest -v
+```
+
 ### Project Structure
 
 ```
 export-langsmith-data/
-├── .env.example              # API key configuration template
-├── .gitignore               # Git ignore patterns
-├── requirements.txt         # Python dependencies
-├── PLAN.md                  # PDCA implementation plan
-├── export-langsmith-requirements.md  # Requirements specification
-├── export_langsmith_traces.py        # Main script
-├── test_export_langsmith_traces.py   # Test suite
-└── README.md                # This file
+├── .env.example                      # API key configuration template
+├── .gitignore                       # Git ignore patterns
+├── requirements.txt                 # Python dependencies
+├── PLAN.md                          # PDCA implementation plan
+├── export-langsmith-requirements.md # Export requirements specification
+├── export_langsmith_traces.py       # Data export script
+├── test_export_langsmith_traces.py  # Export test suite (42 tests)
+├── validate_export.py               # Export validation utility
+├── test_validate_export.py          # Validation test suite (7 tests)
+├── analyze_traces.py                # Performance analysis module
+├── test_analyze_traces.py           # Analysis test suite (31 tests)
+├── notebooks/
+│   └── langsmith_trace_performance_analysis.ipynb  # Interactive analysis notebook
+├── output/                          # Generated CSV analysis results
+│   ├── latency_distribution.csv
+│   ├── bottleneck_analysis.csv
+│   └── parallel_execution_analysis.csv
+└── README.md                        # This file
 ```
 
 ### Development Approach
@@ -263,13 +427,13 @@ This project follows the **PDCA (Plan-Do-Check-Act) framework** with strict Test
 
 ### ✅ Complete - Production Ready
 
-All core features implemented and tested:
-
+**Data Export Module:**
 - ✅ Project setup with virtual environment (uv/venv)
 - ✅ Dependencies configuration with CI/CD quality gates
 - ✅ CLI argument parsing with validation
 - ✅ **Environment variable support** - Optional `.env` file configuration for simplified usage
 - ✅ **Automatic pagination** - Handles API 100-record limit with multi-page fetching and progress indication
+- ✅ **Hierarchical data export** - `--include-children` flag for complete workflow structures
 - ✅ LangSmith client initialization with authentication
 - ✅ Run fetching with exponential backoff rate limiting
 - ✅ Data formatting and transformation with safe field extraction
@@ -277,12 +441,26 @@ All core features implemented and tested:
 - ✅ Comprehensive error scenario handling
 - ✅ Main orchestration with user-friendly progress feedback
 - ✅ End-to-end integration testing
-- ✅ Test suite: 33 tests (25 original + 8 pagination tests), high coverage
+- ✅ Test suite: 33 tests, high coverage
 - ✅ Code quality: Black, Ruff, mypy, Bandit, Safety checks passing
+
+**Performance Analysis Module:**
+- ✅ Data loading from JSON exports with hierarchical support
+- ✅ **Latency distribution analysis** - p50/p95/p99 percentiles, outlier detection
+- ✅ **Bottleneck identification** - Node-level performance ranking and metrics
+- ✅ **Parallel execution verification** - Detect parallel validators, calculate time savings
+- ✅ **CSV export functionality** - Export all analysis results to CSV format
+- ✅ **Interactive Jupyter notebook** - Complete analysis workflow with visualizations
+- ✅ Test suite: 31 tests (10 Phase 1 + 5 Phase 2 + 6 Phase 3 + 6 Phase 4 + 4 Phase 5)
+- ✅ Type-safe implementation with mypy strict mode
+- ✅ Code quality: Black, Ruff, mypy checks passing
+- ✅ TDD methodology: Strict RED-GREEN-REFACTOR cycles across all 5 phases
 
 ### Optional Features Not Implemented
 
 - ⏸️ Progress indication (tqdm) - Skipped in favor of simple console output
+- ⏸️ Cost analysis (Phase 3B) - Future enhancement for token usage tracking
+- ⏸️ Failure analysis (Phase 3C) - Future enhancement for error pattern detection
 
 ## Troubleshooting
 
