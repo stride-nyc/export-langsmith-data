@@ -95,6 +95,49 @@ class TestArgumentParsing:
             with pytest.raises(SystemExit):
                 parse_arguments()
 
+    def test_parse_arguments_include_children_defaults_to_false(self):
+        """Test that --include-children flag defaults to False when not specified."""
+        # Arrange
+        test_args = [
+            "--api-key",
+            "lsv2_pt_test_key",
+            "--project",
+            "test-project",
+            "--limit",
+            "100",
+            "--output",
+            "test_output.json",
+        ]
+
+        # Act
+        with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
+            args = parse_arguments()
+
+        # Assert
+        assert args.include_children is False
+
+    def test_parse_arguments_include_children_flag(self):
+        """Test that --include-children flag is parsed correctly."""
+        # Arrange
+        test_args = [
+            "--api-key",
+            "lsv2_pt_test_key",
+            "--project",
+            "test-project",
+            "--limit",
+            "100",
+            "--output",
+            "test_output.json",
+            "--include-children",
+        ]
+
+        # Act
+        with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
+            args = parse_arguments()
+
+        # Assert
+        assert args.include_children is True
+
 
 class TestValidateRequiredArgs:
     """Test validate_required_args function with various argument combinations."""
@@ -459,8 +502,106 @@ class TestLangSmithExporter:
         assert parent_trace["id"] == "parent_789"
         assert parent_trace["name"] == "parent_workflow"
         assert len(parent_trace["child_runs"]) == 2
-        assert parent_trace["child_runs"][0].id == "child_1"
-        assert parent_trace["child_runs"][1].id == "child_2"
+        # Child runs are now formatted as dictionaries (not Mock objects)
+        assert parent_trace["child_runs"][0]["id"] == "child_1"
+        assert parent_trace["child_runs"][0]["name"] == "child_workflow_1"
+        assert parent_trace["child_runs"][1]["id"] == "child_2"
+        assert parent_trace["child_runs"][1]["name"] == "child_workflow_2"
+
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_recursively_formats_children(self, mock_client_class):
+        """Test that child_runs are recursively formatted as dictionaries, not Run objects."""
+        import json
+        import tempfile
+        import os
+
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create a child run with all attributes
+        child_run = Mock(
+            spec=[
+                "id",
+                "name",
+                "start_time",
+                "end_time",
+                "status",
+                "inputs",
+                "outputs",
+                "error",
+                "run_type",
+                "child_runs",
+            ]
+        )
+        child_run.id = "child_1"
+        child_run.name = "child_workflow"
+        child_run.start_time = None
+        child_run.end_time = None
+        child_run.status = "completed"
+        child_run.inputs = {}
+        child_run.outputs = {}
+        child_run.error = None
+        child_run.run_type = "chain"
+        child_run.child_runs = []
+
+        # Create parent run with child
+        parent_run = Mock(
+            spec=[
+                "id",
+                "name",
+                "start_time",
+                "end_time",
+                "status",
+                "inputs",
+                "outputs",
+                "error",
+                "run_type",
+                "child_runs",
+            ]
+        )
+        parent_run.id = "parent_1"
+        parent_run.name = "parent_workflow"
+        parent_run.start_time = None
+        parent_run.end_time = None
+        parent_run.status = "completed"
+        parent_run.inputs = {}
+        parent_run.outputs = {}
+        parent_run.error = None
+        parent_run.run_type = "chain"
+        parent_run.child_runs = [child_run]
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        formatted_data = exporter.format_trace_data([parent_run])
+
+        # Assert - formatted data should be JSON serializable
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+            temp_path = f.name
+
+        try:
+            # This should not raise an exception
+            with open(temp_path, "w") as f:
+                json.dump(formatted_data, f)
+
+            # Verify the structure
+            with open(temp_path, "r") as f:
+                data = json.load(f)
+
+            assert len(data["traces"]) == 1
+            parent_trace = data["traces"][0]
+            assert parent_trace["id"] == "parent_1"
+            assert len(parent_trace["child_runs"]) == 1
+
+            # Child should be a dictionary, not a Mock object
+            child_trace = parent_trace["child_runs"][0]
+            assert isinstance(child_trace, dict)
+            assert child_trace["id"] == "child_1"
+            assert child_trace["name"] == "child_workflow"
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
     @patch("export_langsmith_traces.Client")
     def test_export_to_json_success(self, mock_client_class):
@@ -800,6 +941,134 @@ class TestPagination:
         assert len(page_mentions) > 0, "Expected pagination progress messages"
 
 
+class TestHierarchicalDataFetching:
+    """Test fetching runs with child relationships."""
+
+    @patch("export_langsmith_traces.Client")
+    def test_fetch_runs_with_children_single_run(self, mock_client_class):
+        """Test fetching a single run with its children."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        exporter = LangSmithExporter(api_key="test_key")
+        exporter.client = mock_client
+
+        # Mock a parent run from list_runs (without children)
+        parent_run = Mock()
+        parent_run.id = "parent-123"
+        parent_run.name = "LangGraph"
+        parent_run.run_type = "chain"
+        parent_run.child_runs = None  # list_runs doesn't populate this
+
+        # Mock the full run with children from read_run
+        child1 = Mock()
+        child1.id = "child-1"
+        child1.name = "generate_spec"
+        child1.run_type = "chain"
+        child1.child_runs = []
+
+        child2 = Mock()
+        child2.id = "child-2"
+        child2.name = "xml_transformation"
+        child2.run_type = "chain"
+        child2.child_runs = []
+
+        full_parent_run = Mock()
+        full_parent_run.id = "parent-123"
+        full_parent_run.name = "LangGraph"
+        full_parent_run.run_type = "chain"
+        full_parent_run.child_runs = [child1, child2]
+
+        # Configure mocks
+        mock_client.list_runs.return_value = iter([parent_run])
+        mock_client.read_run.return_value = full_parent_run
+
+        # Act
+        runs = exporter.fetch_runs_with_children(project_name="test-project", limit=1)
+
+        # Assert
+        assert len(runs) == 1
+        assert runs[0].id == "parent-123"
+        assert runs[0].child_runs is not None
+        assert len(runs[0].child_runs) == 2
+        assert runs[0].child_runs[0].name == "generate_spec"
+        assert runs[0].child_runs[1].name == "xml_transformation"
+
+        # Verify read_run was called with load_child_runs=True
+        mock_client.read_run.assert_called_once_with("parent-123", load_child_runs=True)
+
+    @patch("export_langsmith_traces.Client")
+    def test_fetch_runs_with_children_multiple_runs(self, mock_client_class):
+        """Test fetching multiple runs with their children."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        exporter = LangSmithExporter(api_key="test_key")
+        exporter.client = mock_client
+
+        # Mock 3 parent runs from list_runs
+        parent1 = Mock(id="p1", name="LangGraph", child_runs=None)
+        parent2 = Mock(id="p2", name="LangGraph", child_runs=None)
+        parent3 = Mock(id="p3", name="LangGraph", child_runs=None)
+
+        # Mock full runs with children
+        full1 = Mock(id="p1", name="LangGraph", child_runs=[Mock(name="node1")])
+        full2 = Mock(id="p2", name="LangGraph", child_runs=[Mock(name="node2")])
+        full3 = Mock(id="p3", name="LangGraph", child_runs=[Mock(name="node3")])
+
+        mock_client.list_runs.return_value = iter([parent1, parent2, parent3])
+        mock_client.read_run.side_effect = [full1, full2, full3]
+
+        # Act
+        runs = exporter.fetch_runs_with_children(project_name="test-project", limit=3)
+
+        # Assert
+        assert len(runs) == 3
+        assert all(run.child_runs is not None for run in runs)
+        assert mock_client.read_run.call_count == 3
+
+    @patch("export_langsmith_traces.Client")
+    def test_fetch_runs_with_children_handles_api_error(self, mock_client_class):
+        """Test that fetch_runs_with_children gracefully handles errors."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        exporter = LangSmithExporter(api_key="test_key")
+        exporter.client = mock_client
+
+        parent = Mock(id="p1", name="LangGraph", child_runs=None)
+        mock_client.list_runs.return_value = iter([parent])
+        mock_client.read_run.side_effect = Exception("API Error")
+
+        # Act
+        runs = exporter.fetch_runs_with_children(project_name="test-project", limit=1)
+
+        # Assert - should fall back to flat run
+        assert len(runs) == 1
+        assert runs[0].id == "p1"  # Falls back to original run
+
+    @patch("export_langsmith_traces.Client")
+    def test_fetch_runs_with_children_empty_project(self, mock_client_class):
+        """Test fetch_runs_with_children with empty project."""
+        # Arrange
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        exporter = LangSmithExporter(api_key="test_key")
+        exporter.client = mock_client
+        mock_client.list_runs.return_value = iter([])
+
+        # Act
+        runs = exporter.fetch_runs_with_children(project_name="test-project", limit=10)
+
+        # Assert
+        assert len(runs) == 0
+        mock_client.read_run.assert_not_called()
+
+
 class TestIntegration:
     """Test end-to-end integration."""
 
@@ -963,6 +1232,132 @@ class TestIntegration:
 
             # Verify multiple API calls were made (pagination)
             assert mock_client.list_runs.call_count == 2  # 150 records = 2 pages
+
+        finally:
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
+
+    @patch("export_langsmith_traces.Client")
+    @patch("sys.argv")
+    @patch("export_langsmith_traces.time.sleep")  # Speed up test
+    def test_main_with_include_children_flag(
+        self, mock_sleep, mock_argv, mock_client_class
+    ):
+        """Test that main() uses fetch_runs_with_children() when --include-children is set."""
+        import tempfile
+        import os
+        import json
+        from export_langsmith_traces import main
+
+        # Arrange
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+            temp_output = f.name
+
+        try:
+            mock_argv.__getitem__ = Mock(
+                side_effect=lambda i: [
+                    "export_langsmith_traces.py",
+                    "--api-key",
+                    "test_key",
+                    "--project",
+                    "test-project",
+                    "--limit",
+                    "2",
+                    "--output",
+                    temp_output,
+                    "--include-children",
+                ][i]
+            )
+
+            mock_client = Mock()
+            mock_client_class.return_value = mock_client
+
+            # Create mock flat runs (from list_runs)
+            flat_run1 = Mock()
+            flat_run1.id = "run_1"
+            flat_run1.name = "LangGraph"
+            flat_run1.child_runs = None  # list_runs doesn't populate this
+
+            flat_run2 = Mock()
+            flat_run2.id = "run_2"
+            flat_run2.name = "LangGraph"
+            flat_run2.child_runs = None
+
+            # Create mock full runs with children (from read_run)
+            # Use simple Mock spec to avoid JSON serialization issues
+            full_run1 = Mock(
+                spec=[
+                    "id",
+                    "name",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "inputs",
+                    "outputs",
+                    "error",
+                    "run_type",
+                    "child_runs",
+                ]
+            )
+            full_run1.id = "run_1"
+            full_run1.name = "LangGraph"
+            full_run1.start_time = None
+            full_run1.end_time = None
+            full_run1.status = "completed"
+            full_run1.inputs = {}
+            full_run1.outputs = {}
+            full_run1.error = None
+            full_run1.run_type = "chain"
+            full_run1.child_runs = []  # Empty list to avoid nested Mock serialization
+
+            full_run2 = Mock(
+                spec=[
+                    "id",
+                    "name",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "inputs",
+                    "outputs",
+                    "error",
+                    "run_type",
+                    "child_runs",
+                ]
+            )
+            full_run2.id = "run_2"
+            full_run2.name = "LangGraph"
+            full_run2.start_time = None
+            full_run2.end_time = None
+            full_run2.status = "completed"
+            full_run2.inputs = {}
+            full_run2.outputs = {}
+            full_run2.error = None
+            full_run2.run_type = "chain"
+            full_run2.child_runs = []
+
+            # Mock behaviors
+            mock_client.list_runs.return_value = iter([flat_run1, flat_run2])
+            mock_client.read_run.side_effect = [full_run1, full_run2]
+
+            # Act
+            main()
+
+            # Assert
+            assert os.path.exists(temp_output)
+
+            # Verify read_run was called (indicating hierarchical fetch was used)
+            assert mock_client.read_run.call_count == 2
+            mock_client.read_run.assert_any_call("run_1", load_child_runs=True)
+            mock_client.read_run.assert_any_call("run_2", load_child_runs=True)
+
+            # Verify the output file was created successfully
+            with open(temp_output, "r") as f:
+                data = json.load(f)
+
+            assert "traces" in data
+            assert len(data["traces"]) == 2
+            # The key test is that read_run was called with load_child_runs=True
+            # In real usage, the SDK will return proper Run objects with populated children
 
         finally:
             if os.path.exists(temp_output):

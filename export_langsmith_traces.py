@@ -300,6 +300,119 @@ class LangSmithExporter:
             f"Last error: {str(last_exception)}"
         ) from last_exception
 
+    def fetch_runs_with_children(self, project_name: str, limit: int) -> List[Any]:
+        """
+        Fetch runs with full hierarchical child relationships.
+
+        This method uses a two-step approach:
+        1. Call fetch_runs() to get all runs (leverages existing pagination)
+        2. For each run, call read_run(id, load_child_runs=True) to get full hierarchy
+
+        This is necessary because list_runs() doesn't populate child_runs by default,
+        which is required for Phase 3A analysis (bottleneck identification, parallel
+        execution verification).
+
+        Args:
+            project_name: Name or ID of the LangSmith project
+            limit: Maximum number of runs to fetch
+
+        Returns:
+            List of Run objects with populated child_runs fields
+
+        Note:
+            This method is slower than fetch_runs() as it makes 1 API call per run,
+            but provides complete hierarchical data needed for deep analysis.
+        """
+        print(f"🔄 Fetching runs with hierarchical data from project: {project_name}")
+
+        # Step 1: Get all run IDs using existing pagination logic
+        flat_runs = self.fetch_runs(project_name, limit)
+
+        if not flat_runs:
+            return []
+
+        print(
+            f"📥 Fetching full hierarchical data for {len(flat_runs)} runs (this may take a moment)..."
+        )
+
+        # Step 2: Fetch each run with full child relationships
+        hierarchical_runs = []
+
+        for i, flat_run in enumerate(flat_runs, 1):
+            try:
+                # Fetch the full run with children
+                full_run = self.client.read_run(flat_run.id, load_child_runs=True)
+                hierarchical_runs.append(full_run)
+
+                # Progress update every 10 runs for large batches
+                if len(flat_runs) > 10 and i % 10 == 0:
+                    print(f"    ✓ Processed {i}/{len(flat_runs)} runs...")
+
+            except Exception as e:
+                # If read_run fails, fall back to the flat run
+                print(
+                    f"    ⚠️  Warning: Failed to fetch children for run {flat_run.id}: {str(e)}"
+                )
+                print("    → Falling back to flat run (no children)")
+                hierarchical_runs.append(flat_run)
+
+            # Rate limiting: 200ms delay between read_run calls
+            # (avoid overwhelming the API when fetching many runs)
+            if i < len(flat_runs):  # Don't delay after the last run
+                time.sleep(0.2)
+
+        print(
+            f"✅ Successfully fetched {len(hierarchical_runs)} runs with hierarchical data"
+        )
+
+        return hierarchical_runs
+
+    def _format_single_run(self, run: Any) -> Dict[str, Any]:
+        """
+        Transform a single Run object to dictionary format (recursively handles children).
+
+        Args:
+            run: LangSmith Run object
+
+        Returns:
+            Dictionary representation of the run
+        """
+        # Calculate duration
+        duration_seconds = 0
+        if hasattr(run, "start_time") and hasattr(run, "end_time"):
+            if run.start_time and run.end_time:
+                duration_seconds = (run.end_time - run.start_time).total_seconds()
+
+        # Recursively format child runs
+        child_runs = getattr(run, "child_runs", [])
+        formatted_children = []
+        if child_runs:
+            for child in child_runs:
+                formatted_children.append(self._format_single_run(child))
+
+        trace = {
+            "id": str(getattr(run, "id", None)) if hasattr(run, "id") else None,
+            "name": getattr(run, "name", None),
+            "start_time": (
+                run.start_time.isoformat()
+                if hasattr(run, "start_time") and run.start_time
+                else None
+            ),
+            "end_time": (
+                run.end_time.isoformat()
+                if hasattr(run, "end_time") and run.end_time
+                else None
+            ),
+            "duration_seconds": duration_seconds,
+            "status": getattr(run, "status", None),
+            "inputs": getattr(run, "inputs", {}),
+            "outputs": getattr(run, "outputs", {}),
+            "error": getattr(run, "error", None),
+            "run_type": getattr(run, "run_type", None),
+            "child_runs": formatted_children,
+        }
+        return trace
+
     def format_trace_data(self, runs: List[Any]) -> Dict[str, Any]:
         """
         Transform Run objects to output JSON schema.
@@ -317,37 +430,10 @@ class LangSmithExporter:
             "langsmith_api_version": "0.4.x",
         }
 
-        # Transform runs to trace format
+        # Transform runs to trace format (recursively handles child_runs)
         traces = []
         for run in runs:
-            # Calculate duration
-            duration_seconds = 0
-            if hasattr(run, "start_time") and hasattr(run, "end_time"):
-                if run.start_time and run.end_time:
-                    duration_seconds = (run.end_time - run.start_time).total_seconds()
-
-            trace = {
-                "id": str(getattr(run, "id", None)) if hasattr(run, "id") else None,
-                "name": getattr(run, "name", None),
-                "start_time": (
-                    run.start_time.isoformat()
-                    if hasattr(run, "start_time") and run.start_time
-                    else None
-                ),
-                "end_time": (
-                    run.end_time.isoformat()
-                    if hasattr(run, "end_time") and run.end_time
-                    else None
-                ),
-                "duration_seconds": duration_seconds,
-                "status": getattr(run, "status", None),
-                "inputs": getattr(run, "inputs", {}),
-                "outputs": getattr(run, "outputs", {}),
-                "error": getattr(run, "error", None),
-                "run_type": getattr(run, "run_type", None),
-                "child_runs": getattr(run, "child_runs", []),
-            }
-            traces.append(trace)
+            traces.append(self._format_single_run(run))
 
         return {"export_metadata": export_metadata, "traces": traces}
 
@@ -476,6 +562,13 @@ Example usage with .env file:
         "--output", type=str, required=True, help="Output JSON file path"
     )
 
+    parser.add_argument(
+        "--include-children",
+        action="store_true",
+        default=False,
+        help="Fetch hierarchical data with child runs (slower but complete for analysis)",
+    )
+
     return parser.parse_args()
 
 
@@ -551,13 +644,20 @@ def main() -> None:
 
         # Fetch runs
         try:
-            print("📥 Fetching traces...")
-            runs = exporter.fetch_runs(project_name=args.project, limit=args.limit)
-            # fetch_runs now provides progress updates, so adjust final message
-            if len(runs) != args.limit:
-                print(f"✓ Fetched {len(runs)} traces (requested {args.limit})")
+            if args.include_children:
+                # Fetch with hierarchical child relationships (slower but complete)
+                runs = exporter.fetch_runs_with_children(
+                    project_name=args.project, limit=args.limit
+                )
             else:
-                print(f"✓ Fetched {len(runs)} traces")
+                # Fast flat fetch (no child relationships)
+                print("📥 Fetching traces...")
+                runs = exporter.fetch_runs(project_name=args.project, limit=args.limit)
+                # fetch_runs now provides progress updates, so adjust final message
+                if len(runs) != args.limit:
+                    print(f"✓ Fetched {len(runs)} traces (requested {args.limit})")
+                else:
+                    print(f"✓ Fetched {len(runs)} traces")
 
             if len(runs) == 0:
                 print("⚠️  No traces found in project")
