@@ -356,3 +356,127 @@ def analyze_latency_distribution(workflows: List[Workflow]) -> LatencyDistributi
         outliers_below_7min=outliers_below,
         percent_within_7_23_claim=percent_within,
     )
+
+
+# ============================================================================
+# Phase 3: Bottleneck Identification
+# ============================================================================
+
+
+@dataclass
+class NodePerformance:
+    """
+    Performance metrics for a single node type across workflows.
+
+    Attributes:
+        node_name: Name of the node (e.g., 'generate_spec', 'xml_transformation')
+        execution_count: Number of times this node executed across all workflows
+        avg_duration_seconds: Average execution time in seconds
+        median_duration_seconds: Median execution time in seconds
+        std_dev_seconds: Standard deviation of execution times
+        avg_percent_of_workflow: Average percentage of total workflow time
+        total_time_seconds: Total time spent in this node across all workflows
+    """
+
+    node_name: str
+    execution_count: int
+    avg_duration_seconds: float
+    median_duration_seconds: float
+    std_dev_seconds: float
+    avg_percent_of_workflow: float
+    total_time_seconds: float
+
+
+@dataclass
+class BottleneckAnalysis:
+    """
+    Results of bottleneck identification analysis.
+
+    Attributes:
+        node_performances: List of NodePerformance objects (sorted by avg_duration)
+        primary_bottleneck: Name of the slowest node (highest avg duration)
+        top_3_bottlenecks: List of top 3 slowest node names
+    """
+
+    node_performances: List[NodePerformance]
+    primary_bottleneck: Optional[str]
+    top_3_bottlenecks: List[str]
+
+
+def identify_bottlenecks(workflows: List[Workflow]) -> BottleneckAnalysis:
+    """
+    Identify performance bottlenecks by analyzing node execution times.
+
+    Analyzes all child nodes across workflows to identify which nodes
+    consume the most time and have the highest variability.
+
+    Args:
+        workflows: List of Workflow objects to analyze
+
+    Returns:
+        BottleneckAnalysis with ranked node performance metrics
+
+    Raises:
+        ValueError: If no valid workflows are provided
+    """
+    if not workflows:
+        raise ValueError("No valid workflows to analyze (empty list)")
+
+    # Collect all node executions by node name
+    node_executions: dict[str, list[tuple[Trace, float]]] = {}
+
+    for workflow in workflows:
+        workflow_duration = workflow.total_duration
+        if workflow_duration == 0:
+            continue  # Skip workflows with zero duration
+
+        # Iterate through all child nodes (excluding root)
+        for node_name, node_traces in workflow.nodes.items():
+            if node_name not in node_executions:
+                node_executions[node_name] = []
+
+            for trace in node_traces:
+                # Calculate percent of workflow time
+                percent_of_workflow = (
+                    (trace.duration_seconds / workflow_duration) * 100.0
+                    if workflow_duration > 0
+                    else 0.0
+                )
+                node_executions[node_name].append((trace, percent_of_workflow))
+
+    # If no nodes found, return empty analysis
+    if not node_executions:
+        return BottleneckAnalysis(
+            node_performances=[], primary_bottleneck=None, top_3_bottlenecks=[]
+        )
+
+    # Calculate aggregated statistics for each node
+    node_performances = []
+
+    for node_name, executions in node_executions.items():
+        durations = np.array([trace.duration_seconds for trace, _ in executions])
+        percents = np.array([percent for _, percent in executions])
+
+        node_perf = NodePerformance(
+            node_name=node_name,
+            execution_count=len(executions),
+            avg_duration_seconds=float(np.mean(durations)),
+            median_duration_seconds=float(np.median(durations)),
+            std_dev_seconds=float(np.std(durations)),
+            avg_percent_of_workflow=float(np.mean(percents)),
+            total_time_seconds=float(np.sum(durations)),
+        )
+        node_performances.append(node_perf)
+
+    # Sort by average duration (descending) to identify bottlenecks
+    node_performances.sort(key=lambda x: x.avg_duration_seconds, reverse=True)
+
+    # Identify primary bottleneck and top 3
+    primary_bottleneck = node_performances[0].node_name if node_performances else None
+    top_3_bottlenecks = [n.node_name for n in node_performances[:3]]
+
+    return BottleneckAnalysis(
+        node_performances=node_performances,
+        primary_bottleneck=primary_bottleneck,
+        top_3_bottlenecks=top_3_bottlenecks,
+    )

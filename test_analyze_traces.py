@@ -532,5 +532,267 @@ class TestLatencyDistribution:
             analyze_latency_distribution([])
 
 
+class TestBottleneckIdentification:
+    """Test bottleneck identification analysis (Phase 3)."""
+
+    def test_node_performance_dataclass_creation(self):
+        """Test creating a NodePerformance with all fields."""
+        from analyze_traces import NodePerformance
+
+        # Arrange & Act
+        node_perf = NodePerformance(
+            node_name="generate_spec",
+            execution_count=100,
+            avg_duration_seconds=180.5,
+            median_duration_seconds=175.2,
+            std_dev_seconds=45.3,
+            avg_percent_of_workflow=15.2,
+            total_time_seconds=18050.0,
+        )
+
+        # Assert
+        assert node_perf.node_name == "generate_spec"
+        assert node_perf.execution_count == 100
+        assert node_perf.avg_duration_seconds == 180.5
+        assert node_perf.avg_percent_of_workflow == 15.2
+
+    def test_bottleneck_analysis_dataclass_creation(self):
+        """Test creating a BottleneckAnalysis with all fields."""
+        from analyze_traces import NodePerformance, BottleneckAnalysis
+
+        # Arrange
+        node1 = NodePerformance(
+            node_name="xml_transformation",
+            execution_count=100,
+            avg_duration_seconds=250.8,
+            median_duration_seconds=245.0,
+            std_dev_seconds=60.2,
+            avg_percent_of_workflow=21.1,
+            total_time_seconds=25080.0,
+        )
+
+        node2 = NodePerformance(
+            node_name="generate_spec",
+            execution_count=100,
+            avg_duration_seconds=180.5,
+            median_duration_seconds=175.2,
+            std_dev_seconds=45.3,
+            avg_percent_of_workflow=15.2,
+            total_time_seconds=18050.0,
+        )
+
+        # Act
+        analysis = BottleneckAnalysis(
+            node_performances=[node1, node2],
+            primary_bottleneck="xml_transformation",
+            top_3_bottlenecks=["xml_transformation", "generate_spec"],
+        )
+
+        # Assert
+        assert len(analysis.node_performances) == 2
+        assert analysis.primary_bottleneck == "xml_transformation"
+        assert analysis.top_3_bottlenecks[0] == "xml_transformation"
+
+    def test_identify_bottlenecks_basic(self):
+        """Test basic bottleneck identification with simple workflow."""
+        from analyze_traces import Trace, Workflow, identify_bottlenecks
+
+        # Arrange - Create workflow with multiple nodes
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=None,
+            end_time=None,
+            duration_seconds=600.0,  # 10 min total
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["node-1", "node-2", "node-3"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        node1 = Trace(
+            id="node-1",
+            name="generate_spec",
+            start_time=None,
+            end_time=None,
+            duration_seconds=200.0,  # 33% of workflow
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        node2 = Trace(
+            id="node-2",
+            name="xml_transformation",
+            start_time=None,
+            end_time=None,
+            duration_seconds=300.0,  # 50% of workflow (bottleneck)
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        node3 = Trace(
+            id="node-3",
+            name="import_to_neota",
+            start_time=None,
+            end_time=None,
+            duration_seconds=100.0,  # 17% of workflow
+            status="success",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={
+                "generate_spec": [node1],
+                "xml_transformation": [node2],
+                "import_to_neota": [node3],
+            },
+            all_traces=[root, node1, node2, node3],
+        )
+
+        # Act
+        result = identify_bottlenecks([workflow])
+
+        # Assert
+        assert len(result.node_performances) == 3
+        assert result.primary_bottleneck == "xml_transformation"
+        assert result.node_performances[0].node_name == "xml_transformation"
+        assert result.node_performances[0].avg_duration_seconds == 300.0
+        assert result.node_performances[0].execution_count == 1
+
+    def test_identify_bottlenecks_multiple_workflows(self):
+        """Test bottleneck identification across multiple workflows."""
+        from analyze_traces import Trace, Workflow, identify_bottlenecks
+
+        # Arrange - Create 3 workflows with same nodes but different durations
+        workflows = []
+
+        for i in range(3):
+            root = Trace(
+                id=f"root-{i}",
+                name="LangGraph",
+                start_time=None,
+                end_time=None,
+                duration_seconds=1000.0,
+                status="success",
+                run_type="chain",
+                parent_id=None,
+                child_ids=[f"node1-{i}", f"node2-{i}"],
+                inputs={},
+                outputs={},
+                error=None,
+            )
+
+            # Node 1 has consistent performance
+            node1 = Trace(
+                id=f"node1-{i}",
+                name="fast_node",
+                start_time=None,
+                end_time=None,
+                duration_seconds=100.0,  # Always 100 seconds
+                status="success",
+                run_type="chain",
+                parent_id=f"root-{i}",
+                child_ids=[],
+                inputs={},
+                outputs={},
+                error=None,
+            )
+
+            # Node 2 has variable performance (simulating bottleneck)
+            node2 = Trace(
+                id=f"node2-{i}",
+                name="slow_node",
+                start_time=None,
+                end_time=None,
+                duration_seconds=200.0 + (i * 100.0),  # 200, 300, 400 seconds
+                status="success",
+                run_type="chain",
+                parent_id=f"root-{i}",
+                child_ids=[],
+                inputs={},
+                outputs={},
+                error=None,
+            )
+
+            workflow = Workflow(
+                root_trace=root,
+                nodes={"fast_node": [node1], "slow_node": [node2]},
+                all_traces=[root, node1, node2],
+            )
+            workflows.append(workflow)
+
+        # Act
+        result = identify_bottlenecks(workflows)
+
+        # Assert
+        assert len(result.node_performances) == 2
+        assert result.primary_bottleneck == "slow_node"
+
+        # Find slow_node in results
+        slow_node = next(
+            n for n in result.node_performances if n.node_name == "slow_node"
+        )
+        assert slow_node.execution_count == 3
+        assert slow_node.avg_duration_seconds == 300.0  # (200+300+400)/3
+        assert slow_node.std_dev_seconds > 0  # Has variability
+
+    def test_identify_bottlenecks_empty_workflows(self):
+        """Test handling of empty workflow list."""
+        from analyze_traces import identify_bottlenecks
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="No valid workflows"):
+            identify_bottlenecks([])
+
+    def test_identify_bottlenecks_workflows_without_children(self):
+        """Test handling workflows without child nodes."""
+        from analyze_traces import Trace, Workflow, identify_bottlenecks
+
+        # Arrange - Workflow with no child nodes
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=None,
+            end_time=None,
+            duration_seconds=600.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow = Workflow(root_trace=root, nodes={}, all_traces=[root])
+
+        # Act
+        result = identify_bottlenecks([workflow])
+
+        # Assert - Should return empty analysis
+        assert len(result.node_performances) == 0
+        assert result.primary_bottleneck is None
+        assert result.top_3_bottlenecks == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
