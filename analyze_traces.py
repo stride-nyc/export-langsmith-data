@@ -291,6 +291,32 @@ class LatencyDistribution:
     outliers_below_7min: List[str]
     percent_within_7_23_claim: float
 
+    def to_csv(self) -> str:
+        """
+        Export latency distribution results to CSV format.
+
+        Returns:
+            CSV-formatted string with metric names and values
+        """
+        lines = ["metric,value_minutes,outlier_count,notes"]
+        lines.append(f"p50,{self.p50_minutes},,50th percentile (median)")
+        lines.append(f"p95,{self.p95_minutes},,95th percentile")
+        lines.append(f"p99,{self.p99_minutes},,99th percentile")
+        lines.append(f"min,{self.min_minutes},,minimum duration")
+        lines.append(f"max,{self.max_minutes},,maximum duration")
+        lines.append(f"mean,{self.mean_minutes},,average duration")
+        lines.append(f"std_dev,{self.std_dev_minutes},,standard deviation")
+        lines.append(
+            f"outliers_above_23min,,{len(self.outliers_above_23min)},workflows > 23 minutes"
+        )
+        lines.append(
+            f"outliers_below_7min,,{len(self.outliers_below_7min)},workflows < 7 minutes"
+        )
+        lines.append(
+            f"percent_within_7_23_claim,{self.percent_within_7_23_claim},,% within claimed 7-23 min range"
+        )
+        return "\n".join(lines)
+
 
 def analyze_latency_distribution(workflows: List[Workflow]) -> LatencyDistribution:
     """
@@ -402,6 +428,28 @@ class BottleneckAnalysis:
     primary_bottleneck: Optional[str]
     top_3_bottlenecks: List[str]
 
+    def to_csv(self) -> str:
+        """
+        Export bottleneck analysis results to CSV format.
+
+        Returns:
+            CSV-formatted string with node performance metrics
+        """
+        lines = [
+            "node_name,execution_count,avg_duration_seconds,median_duration_seconds,"
+            "std_dev_seconds,avg_percent_of_workflow,total_time_seconds"
+        ]
+
+        for node_perf in self.node_performances:
+            lines.append(
+                f"{node_perf.node_name},{node_perf.execution_count},"
+                f"{node_perf.avg_duration_seconds},{node_perf.median_duration_seconds},"
+                f"{node_perf.std_dev_seconds},{node_perf.avg_percent_of_workflow},"
+                f"{node_perf.total_time_seconds}"
+            )
+
+        return "\n".join(lines)
+
 
 def identify_bottlenecks(workflows: List[Workflow]) -> BottleneckAnalysis:
     """
@@ -511,6 +559,46 @@ class ParallelExecutionEvidence:
     avg_time_savings_seconds: float
     is_parallel: bool
     confidence: str
+
+    def to_csv(self) -> str:
+        """
+        Export parallel execution evidence to CSV format.
+
+        Returns:
+            CSV-formatted string with parallel execution metrics
+        """
+        lines = ["metric,value,unit,interpretation"]
+        lines.append(
+            f"parallel_confirmed_count,{self.parallel_confirmed_count},workflows,"
+            "workflows with parallel validators"
+        )
+        lines.append(
+            f"sequential_count,{self.sequential_count},workflows,"
+            "workflows with sequential validators"
+        )
+        lines.append(
+            f"avg_start_time_delta_seconds,{self.avg_start_time_delta_seconds},seconds,"
+            "avg time between first and last validator start"
+        )
+        lines.append(
+            f"avg_sequential_time_seconds,{self.avg_sequential_time_seconds},seconds,"
+            "avg time if validators ran sequentially"
+        )
+        lines.append(
+            f"avg_parallel_time_seconds,{self.avg_parallel_time_seconds},seconds,"
+            "avg time with parallel execution"
+        )
+        lines.append(
+            f"avg_time_savings_seconds,{self.avg_time_savings_seconds},seconds,"
+            "avg time saved by parallelization"
+        )
+        lines.append(
+            f"is_parallel,{self.is_parallel},boolean,parallel execution verdict"
+        )
+        lines.append(
+            f"confidence,{self.confidence},level,confidence in verdict (high/medium/low/none)"
+        )
+        return "\n".join(lines)
 
 
 # Validator node names to detect

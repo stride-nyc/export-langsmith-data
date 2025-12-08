@@ -1131,5 +1131,142 @@ class TestParallelExecutionVerification:
         assert result.confidence == "none"
 
 
+class TestCSVExport:
+    """Test CSV export functionality (Phase 5)."""
+
+    def test_latency_distribution_to_csv(self):
+        """Test exporting LatencyDistribution to CSV format."""
+        from analyze_traces import LatencyDistribution
+
+        # Arrange
+        dist = LatencyDistribution(
+            p50_minutes=15.0,
+            p95_minutes=22.0,
+            p99_minutes=25.0,
+            min_minutes=8.0,
+            max_minutes=27.0,
+            mean_minutes=16.5,
+            std_dev_minutes=5.2,
+            outliers_above_23min=["trace-1", "trace-2"],
+            outliers_below_7min=["trace-3"],
+            percent_within_7_23_claim=85.0,
+        )
+
+        # Act
+        csv_output = dist.to_csv()
+
+        # Assert
+        assert "metric,value_minutes" in csv_output
+        assert "p50,15.0" in csv_output
+        assert "p95,22.0" in csv_output
+        assert "p99,25.0" in csv_output
+        assert "mean,16.5" in csv_output
+        assert "percent_within_7_23_claim,85.0" in csv_output
+
+    def test_bottleneck_analysis_to_csv(self):
+        """Test exporting BottleneckAnalysis to CSV format."""
+        from analyze_traces import NodePerformance, BottleneckAnalysis
+
+        # Arrange
+        node1 = NodePerformance(
+            node_name="xml_transformation",
+            execution_count=100,
+            avg_duration_seconds=250.8,
+            median_duration_seconds=245.0,
+            std_dev_seconds=60.2,
+            avg_percent_of_workflow=21.1,
+            total_time_seconds=25080.0,
+        )
+
+        node2 = NodePerformance(
+            node_name="generate_spec",
+            execution_count=100,
+            avg_duration_seconds=180.5,
+            median_duration_seconds=175.2,
+            std_dev_seconds=45.3,
+            avg_percent_of_workflow=15.2,
+            total_time_seconds=18050.0,
+        )
+
+        analysis = BottleneckAnalysis(
+            node_performances=[node1, node2],
+            primary_bottleneck="xml_transformation",
+            top_3_bottlenecks=["xml_transformation", "generate_spec"],
+        )
+
+        # Act
+        csv_output = analysis.to_csv()
+
+        # Assert
+        assert (
+            "node_name,execution_count,avg_duration_seconds,median_duration_seconds"
+            in csv_output
+        )
+        assert "xml_transformation,100,250.8,245.0" in csv_output
+        assert "generate_spec,100,180.5,175.2" in csv_output
+
+    def test_parallel_execution_evidence_to_csv(self):
+        """Test exporting ParallelExecutionEvidence to CSV format."""
+        from analyze_traces import ParallelExecutionEvidence
+
+        # Arrange
+        evidence = ParallelExecutionEvidence(
+            parallel_confirmed_count=85,
+            sequential_count=10,
+            avg_start_time_delta_seconds=2.5,
+            avg_sequential_time_seconds=600.0,
+            avg_parallel_time_seconds=350.0,
+            avg_time_savings_seconds=250.0,
+            is_parallel=True,
+            confidence="high",
+        )
+
+        # Act
+        csv_output = evidence.to_csv()
+
+        # Assert
+        assert "metric,value" in csv_output
+        assert "parallel_confirmed_count,85" in csv_output
+        assert "sequential_count,10" in csv_output
+        assert "avg_time_savings_seconds,250.0" in csv_output
+        assert "is_parallel,True" in csv_output
+        assert "confidence,high" in csv_output
+
+    def test_csv_export_writes_to_file(self):
+        """Test writing CSV output to file."""
+        from analyze_traces import LatencyDistribution
+
+        # Arrange
+        dist = LatencyDistribution(
+            p50_minutes=15.0,
+            p95_minutes=22.0,
+            p99_minutes=25.0,
+            min_minutes=8.0,
+            max_minutes=27.0,
+            mean_minutes=16.5,
+            std_dev_minutes=5.2,
+            outliers_above_23min=[],
+            outliers_below_7min=[],
+            percent_within_7_23_claim=90.0,
+        )
+
+        # Act
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, suffix=".csv", encoding="utf-8"
+        ) as f:
+            f.write(dist.to_csv())
+            temp_path = f.name
+
+        try:
+            # Assert - File should exist and contain expected content
+            assert os.path.exists(temp_path)
+            with open(temp_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                assert "p50,15.0" in content
+                assert "p95,22.0" in content
+        finally:
+            os.remove(temp_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
