@@ -209,3 +209,4 @@ __marimo__/
 # LangSmith Export Data (may contain sensitive trace data)
 langsmith_traces_*.json
 traces_export.json
+/.idea/

@@ -9,12 +9,13 @@ This Python script exports trace data from LangSmith using the SDK API, designed
 ## Features
 
 - Export N most recent traces from any LangSmith project
+- **Environment variable support** - Configure once via `.env` file for simplified usage
 - Automatic rate limiting with exponential backoff
 - Progress indication for long-running exports
 - Comprehensive error handling (auth, network, rate limits)
 - Structured JSON output with metadata
 - Type-safe implementation with full type hints
-- Test-driven development with pytest suite
+- Test-driven development with pytest suite (25 tests, 86% coverage)
 
 ## Requirements
 
@@ -36,7 +37,7 @@ cd export-langsmith-data
 **Option A: Using uv (recommended)**
 ```bash
 uv venv
-source .venv/Scripts/activate  # Windows
+.venv/Scripts/activate  # Windows
 # or
 source .venv/bin/activate      # Linux/Mac
 ```
@@ -44,7 +45,7 @@ source .venv/bin/activate      # Linux/Mac
 **Option B: Using venv**
 ```bash
 python -m venv .venv
-source .venv/Scripts/activate  # Windows
+.venv/Scripts/activate  # Windows
 # or
 source .venv/bin/activate      # Linux/Mac
 ```
@@ -73,7 +74,25 @@ Get your API key from: https://smith.langchain.com/settings
 
 ## Usage
 
-### Basic Usage
+### Option 1: Using Environment Variables (Recommended)
+
+Set up your `.env` file once:
+
+```bash
+cp .env.example .env
+# Edit .env with your values:
+# LANGSMITH_API_KEY=lsv2_pt_your_key_here
+# LANGSMITH_PROJECT=your-project-name
+# LANGSMITH_LIMIT=150
+```
+
+Then use simple commands:
+
+```bash
+python export_langsmith_traces.py --output "traces_export.json"
+```
+
+### Option 2: Using Command Line Arguments
 
 ```bash
 python export_langsmith_traces.py \
@@ -83,21 +102,52 @@ python export_langsmith_traces.py \
   --output "traces_export.json"
 ```
 
+### Option 3: Mixed Usage (Override Environment Variables)
+
+```bash
+# Override just the project while using env vars for api-key and limit
+python export_langsmith_traces.py \
+  --project "different-project" \
+  --output "traces_export.json"
+```
+
 ### Parameters
 
-- `--api-key` (required): LangSmith API key for authentication
-- `--project` (required): LangSmith project name or ID
-- `--limit` (required): Number of most recent traces to export (must be > 0)
+- `--api-key` (optional): LangSmith API key for authentication (default: `LANGSMITH_API_KEY` env var)
+- `--project` (optional): LangSmith project name or ID (default: `LANGSMITH_PROJECT` env var)  
+- `--limit` (optional): Number of most recent traces to export (default: `LANGSMITH_LIMIT` env var)
 - `--output` (required): Output JSON file path
 
-### Example
+**Note**: While the CLI arguments are now optional, the values must be provided either via command line or environment variables.
 
+### Examples
+
+**Using environment variables:**
+```bash
+# Set up .env file once
+echo "LANGSMITH_API_KEY=lsv2_pt_abc123..." >> .env
+echo "LANGSMITH_PROJECT=neota-aesp-project" >> .env
+echo "LANGSMITH_LIMIT=200" >> .env
+
+# Simple usage
+python export_langsmith_traces.py --output "neota_traces_2025-11-28.json"
+```
+
+**Using CLI arguments:**
 ```bash
 python export_langsmith_traces.py \
   --api-key "lsv2_pt_abc123..." \
   --project "neota-aesp-project" \
   --limit 200 \
   --output "neota_traces_2025-11-28.json"
+```
+
+**Mixed usage:**
+```bash
+# Use env vars for api-key and project, override limit
+python export_langsmith_traces.py \
+  --limit 500 \
+  --output "large_export.json"
 ```
 
 ## Output Format
@@ -176,6 +226,7 @@ All core features implemented and tested:
 - ✅ Project setup with virtual environment (uv/venv)
 - ✅ Dependencies configuration with CI/CD quality gates
 - ✅ CLI argument parsing with validation
+- ✅ **Environment variable support** - Optional `.env` file configuration for simplified usage
 - ✅ LangSmith client initialization with authentication
 - ✅ Run fetching with exponential backoff rate limiting
 - ✅ Data formatting and transformation with safe field extraction
@@ -183,7 +234,7 @@ All core features implemented and tested:
 - ✅ Comprehensive error scenario handling
 - ✅ Main orchestration with user-friendly progress feedback
 - ✅ End-to-end integration testing
-- ✅ Test suite: 18 tests, 87% coverage
+- ✅ Test suite: 25 tests, 86% coverage
 - ✅ Code quality: Black, Ruff, mypy, Bandit, Safety checks passing
 
 ### Optional Features Not Implemented

@@ -15,8 +15,10 @@ from unittest.mock import Mock, patch
 from export_langsmith_traces import (
     LangSmithExporter,
     parse_arguments,
+    validate_required_args,
     AuthenticationError,
     ExportError,
+    RateLimitError,
 )
 
 
@@ -48,8 +50,8 @@ class TestArgumentParsing:
         assert args.output == "test_output.json"
 
     def test_parse_arguments_missing_required_arg(self):
-        """Test that missing required argument raises error."""
-        # Arrange - missing --api-key argument
+        """Test that missing required argument (no env var fallback) raises error."""
+        # Arrange - missing --api-key argument and no env var
         test_args = [
             "--project",
             "test-project",
@@ -59,10 +61,20 @@ class TestArgumentParsing:
             "test_output.json",
         ]
 
-        # Act & Assert - should raise SystemExit
-        with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
-            with pytest.raises(SystemExit):
-                parse_arguments()
+        # Act & Assert - parse_arguments with no env vars, then validate should fail
+        with patch.dict(
+            "os.environ", {}, clear=True
+        ):  # Clear all env vars before parsing
+            with patch(
+                "export_langsmith_traces.load_dotenv"
+            ):  # Prevent loading .env file
+                with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
+                    args = parse_arguments()
+                    # api_key should be None since not provided via CLI or env
+                    assert args.api_key is None
+                    # Now validate_required_args should raise SystemExit
+                    with pytest.raises(SystemExit):
+                        validate_required_args(args)
 
     def test_parse_arguments_invalid_limit(self):
         """Test that negative or zero limit is rejected."""
@@ -82,6 +94,123 @@ class TestArgumentParsing:
         with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
             with pytest.raises(SystemExit):
                 parse_arguments()
+
+
+class TestValidateRequiredArgs:
+    """Test validate_required_args function with various argument combinations."""
+
+    def test_validate_with_all_args_provided(self):
+        """Test validation passes when all required args are provided."""
+        # Arrange
+        from argparse import Namespace
+
+        args = Namespace(
+            api_key="test_key", project="test-project", limit=100, output="test.json"
+        )
+
+        # Act & Assert - should not raise
+        validate_required_args(args)
+
+    def test_validate_missing_api_key(self):
+        """Test validation fails when api_key is missing."""
+        # Arrange
+        from argparse import Namespace
+
+        args = Namespace(
+            api_key=None, project="test-project", limit=100, output="test.json"
+        )
+
+        # Act & Assert
+        with pytest.raises(SystemExit):
+            validate_required_args(args)
+
+    def test_validate_missing_project(self):
+        """Test validation fails when project is missing."""
+        # Arrange
+        from argparse import Namespace
+
+        args = Namespace(
+            api_key="test_key", project=None, limit=100, output="test.json"
+        )
+
+        # Act & Assert
+        with pytest.raises(SystemExit):
+            validate_required_args(args)
+
+    def test_validate_missing_limit(self):
+        """Test validation fails when limit is missing."""
+        # Arrange
+        from argparse import Namespace
+
+        args = Namespace(
+            api_key="test_key", project="test-project", limit=None, output="test.json"
+        )
+
+        # Act & Assert
+        with pytest.raises(SystemExit):
+            validate_required_args(args)
+
+    def test_validate_multiple_missing_args(self):
+        """Test validation fails when multiple args are missing."""
+        # Arrange
+        from argparse import Namespace
+
+        args = Namespace(api_key=None, project=None, limit=None, output="test.json")
+
+        # Act & Assert
+        with pytest.raises(SystemExit):
+            validate_required_args(args)
+
+    def test_parse_with_env_vars(self):
+        """Test that args can be provided via environment variables."""
+        # Arrange
+        test_args = ["--output", "test.json"]
+
+        # Act
+        with patch.dict(
+            "os.environ",
+            {
+                "LANGSMITH_API_KEY": "env_api_key",
+                "LANGSMITH_PROJECT": "env_project",
+                "LANGSMITH_LIMIT": "200",
+            },
+        ):
+            with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
+                args = parse_arguments()
+
+        # Assert
+        assert args.api_key == "env_api_key"
+        assert args.project == "env_project"
+        assert args.limit == 200
+        assert args.output == "test.json"
+
+        # Validate should pass
+        validate_required_args(args)
+
+    def test_parse_with_mixed_cli_and_env(self):
+        """Test that CLI args override environment variables."""
+        # Arrange
+        test_args = ["--api-key", "cli_key", "--output", "test.json"]
+
+        # Act
+        with patch.dict(
+            "os.environ",
+            {
+                "LANGSMITH_API_KEY": "env_key",
+                "LANGSMITH_PROJECT": "env_project",
+                "LANGSMITH_LIMIT": "200",
+            },
+        ):
+            with patch("sys.argv", ["export_langsmith_traces.py"] + test_args):
+                args = parse_arguments()
+
+        # Assert - CLI should override env
+        assert args.api_key == "cli_key"  # From CLI
+        assert args.project == "env_project"  # From env
+        assert args.limit == 200  # From env
+
+        # Validate should pass
+        validate_required_args(args)
 
 
 class TestLangSmithExporter:
@@ -439,9 +568,12 @@ class TestErrorHandling:
 
         exporter = LangSmithExporter(api_key="test_key")
 
-        # Act & Assert - should retry and eventually fail
-        with pytest.raises(TimeoutError):
+        # Act & Assert - should retry and eventually raise RateLimitError
+        with pytest.raises(RateLimitError) as exc_info:
             exporter.fetch_runs(project_name="test-project", limit=10)
+
+        # Verify the error message contains info about the timeout
+        assert "Connection timeout" in str(exc_info.value)
 
         # Should have retried MAX_RETRIES times
         assert mock_client.list_runs.call_count == exporter.MAX_RETRIES

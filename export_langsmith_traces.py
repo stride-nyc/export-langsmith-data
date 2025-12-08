@@ -22,11 +22,13 @@ Date: 2025-11-28
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
 from langsmith import Client
 
 
@@ -87,12 +89,22 @@ class LangSmithExporter:
                 f"Please verify your API key is valid. Error: {str(e)}"
             ) from e
 
+    def _looks_like_uuid(self, value: str) -> bool:
+        """Check if a string looks like a UUID."""
+        import re
+
+        uuid_pattern = re.compile(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            re.IGNORECASE,
+        )
+        return bool(uuid_pattern.match(value))
+
     def fetch_runs(self, project_name: str, limit: int) -> List[Any]:
         """
         Fetch runs from LangSmith with rate limiting.
 
         Args:
-            project_name: Name of the LangSmith project
+            project_name: Name or ID of the LangSmith project
             limit: Maximum number of runs to retrieve
 
         Returns:
@@ -103,23 +115,60 @@ class LangSmithExporter:
             RateLimitError: If rate limit exceeded after retries
         """
         attempt = 0
+        last_exception = None
+
         while attempt < self.MAX_RETRIES:
             try:
+                # Try with project_name parameter first
                 runs = list(
                     self.client.list_runs(project_name=project_name, limit=limit)
                 )
                 return runs
-            except Exception:
+            except Exception as e:
+                last_exception = e
+                error_msg = str(e).lower()
+
+                # Check if this is a project not found error (not a rate limit or network error)
+                if any(
+                    term in error_msg
+                    for term in ["not found", "does not exist", "project", "404"]
+                ):
+                    # If it looks like a UUID, try as project_id instead
+                    if self._looks_like_uuid(project_name):
+                        print("Trying project ID instead of name...")
+                        try:
+                            runs = list(
+                                self.client.list_runs(
+                                    project_id=project_name, limit=limit
+                                )
+                            )
+                            return runs
+                        except Exception:  # nosec B110
+                            pass  # Intentional: Fall through to retry logic if project_id also fails
+
+                    # If first attempt and looks like project name issue, raise specific error
+                    if attempt == 0:
+                        raise ProjectNotFoundError(
+                            f"Project '{project_name}' not found. "
+                            f"Please verify the project name or try using the project ID (UUID format). "
+                            f"You can find the project ID in the LangSmith URL when viewing your project. "
+                            f"Original error: {str(e)}"
+                        ) from e
+
                 attempt += 1
                 if attempt >= self.MAX_RETRIES:
-                    raise
+                    break
                 # Exponential backoff
                 backoff_time = self.INITIAL_BACKOFF * (
                     self.BACKOFF_MULTIPLIER ** (attempt - 1)
                 )
                 time.sleep(backoff_time)
-        # This should never be reached, but mypy needs it
-        raise Exception("Max retries exceeded")
+
+        # If we get here, all retries failed
+        raise RateLimitError(
+            f"Failed to fetch runs after {self.MAX_RETRIES} attempts. "
+            f"Last error: {str(last_exception)}"
+        ) from last_exception
 
     def format_trace_data(self, runs: List[Any]) -> Dict[str, Any]:
         """
@@ -225,42 +274,72 @@ def _positive_int(value: str) -> int:
         raise argparse.ArgumentTypeError(f"{value} must be an integer")
 
 
+def _get_env_limit() -> int:
+    """Get limit from environment variable with validation."""
+    try:
+        limit_str = os.getenv("LANGSMITH_LIMIT", "0")
+        limit = int(limit_str)
+        if limit <= 0:
+            return 0
+        return limit
+    except ValueError:
+        return 0
+
+
 def parse_arguments() -> argparse.Namespace:
     """
-    Parse command-line arguments.
+    Parse command-line arguments with environment variable fallbacks.
 
     Returns:
         Parsed arguments namespace
     """
+    # Load environment variables from .env file
+    load_dotenv()
+
     parser = argparse.ArgumentParser(
         description="Export LangSmith trace data for offline analysis",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Example usage:
+Example usage with CLI arguments:
   python export_langsmith_traces.py \\
       --api-key "lsv2_pt_..." \\
       --project "my-project" \\
       --limit 150 \\
       --output "traces_export.json"
+
+Example usage with .env file:
+  # Set up .env file with defaults
+  echo "LANGSMITH_API_KEY=lsv2_pt_..." >> .env
+  echo "LANGSMITH_PROJECT=my-project" >> .env  
+  echo "LANGSMITH_LIMIT=150" >> .env
+  
+  # Then simple usage
+  python export_langsmith_traces.py --output traces.json
         """,
     )
 
     parser.add_argument(
         "--api-key",
         type=str,
-        required=True,
-        help="LangSmith API key for authentication",
+        required=False,
+        default=os.getenv("LANGSMITH_API_KEY"),
+        help="LangSmith API key for authentication (default: LANGSMITH_API_KEY env var)",
     )
 
     parser.add_argument(
-        "--project", type=str, required=True, help="LangSmith project name or ID"
+        "--project",
+        type=str,
+        required=False,
+        default=os.getenv("LANGSMITH_PROJECT"),
+        help="LangSmith project name or ID (default: LANGSMITH_PROJECT env var)",
     )
 
     parser.add_argument(
         "--limit",
         type=_positive_int,
-        required=True,
-        help="Number of most recent traces to export (must be > 0)",
+        required=False,
+        default=_get_env_limit() or None,
+        help="Number of most recent traces to export (default: LANGSMITH_LIMIT env var)",
     )
 
     parser.add_argument(
@@ -268,6 +347,37 @@ Example usage:
     )
 
     return parser.parse_args()
+
+
+def validate_required_args(args: argparse.Namespace) -> None:
+    """
+    Validate that required arguments are provided via CLI or environment.
+
+    Args:
+        args: Parsed command line arguments
+
+    Raises:
+        SystemExit: If required arguments are missing
+    """
+    errors = []
+
+    if not args.api_key:
+        errors.append("--api-key is required (or set LANGSMITH_API_KEY in .env)")
+
+    if not args.project:
+        errors.append("--project is required (or set LANGSMITH_PROJECT in .env)")
+
+    if not args.limit:
+        errors.append("--limit is required (or set LANGSMITH_LIMIT in .env)")
+
+    if errors:
+        print("❌ Missing required arguments:", file=sys.stderr)
+        for error in errors:
+            print(f"   {error}", file=sys.stderr)
+        print("\nTip: Create a .env file with your defaults:", file=sys.stderr)
+        print("   cp .env.example .env", file=sys.stderr)
+        print("   # Edit .env with your values", file=sys.stderr)
+        sys.exit(1)
 
 
 def main() -> None:
@@ -295,6 +405,9 @@ def main() -> None:
     try:
         # Parse arguments
         args = parse_arguments()
+
+        # Validate that required arguments are available
+        validate_required_args(args)
 
         print(f"🚀 Exporting {args.limit} traces from project '{args.project}'...")
 
