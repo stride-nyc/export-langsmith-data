@@ -116,6 +116,43 @@ class ScalingProjection:
     cost_per_month_30days: Optional[float] = None  # If monthly estimate provided
 
 
+@dataclass
+class NodeCostSummary:
+    """Cost summary for a node type across workflows."""
+
+    node_name: str
+    execution_count: int
+    total_cost: float
+    avg_cost_per_execution: float
+    percent_of_total_cost: float
+
+
+@dataclass
+class CostAnalysisResults:
+    """Complete cost analysis results."""
+
+    # Per-workflow metrics
+    avg_cost_per_workflow: float
+    median_cost_per_workflow: float
+    min_cost: float
+    max_cost: float
+
+    # Node-level breakdown
+    node_summaries: List[NodeCostSummary]    # Sorted by cost descending
+    top_cost_driver: Optional[str]
+
+    # Cache effectiveness
+    cache_effectiveness_percent: Optional[float]
+    cache_savings_dollars: Optional[float]
+
+    # Scaling projections
+    scaling_projections: Dict[str, ScalingProjection]  # "10x", "100x", etc.
+
+    # Metadata
+    total_workflows_analyzed: int
+    data_quality_notes: List[str]
+
+
 # ============================================================================
 # Token Extraction Functions
 # ============================================================================
@@ -298,3 +335,136 @@ def project_scaling_costs(
         projections[label] = projection
 
     return projections
+
+
+# ============================================================================
+# Aggregation and Analysis Functions
+# ============================================================================
+
+def aggregate_node_costs(
+    workflow_analyses: List[WorkflowCostAnalysis],
+) -> List[NodeCostSummary]:
+    """
+    Aggregate costs by node type across all workflows.
+
+    Args:
+        workflow_analyses: List of WorkflowCostAnalysis objects
+
+    Returns:
+        List of NodeCostSummary objects sorted by total_cost descending
+    """
+    if not workflow_analyses:
+        return []
+
+    # Aggregate by node name
+    node_data: Dict[str, Dict[str, Any]] = {}
+    total_overall_cost = 0.0
+
+    for workflow_analysis in workflow_analyses:
+        for cost_breakdown in workflow_analysis.node_costs:
+            node_name = cost_breakdown.trace_name
+            if node_name not in node_data:
+                node_data[node_name] = {
+                    "execution_count": 0,
+                    "total_cost": 0.0,
+                }
+            node_data[node_name]["execution_count"] += 1
+            node_data[node_name]["total_cost"] += cost_breakdown.total_cost
+            total_overall_cost += cost_breakdown.total_cost
+
+    # Create summaries with percentages
+    summaries = []
+    for node_name, data in node_data.items():
+        execution_count = data["execution_count"]
+        total_cost = data["total_cost"]
+        avg_cost = total_cost / execution_count if execution_count > 0 else 0.0
+        percent_of_total = (total_cost / total_overall_cost * 100.0) if total_overall_cost > 0 else 0.0
+
+        summary = NodeCostSummary(
+            node_name=node_name,
+            execution_count=execution_count,
+            total_cost=total_cost,
+            avg_cost_per_execution=avg_cost,
+            percent_of_total_cost=percent_of_total,
+        )
+        summaries.append(summary)
+
+    # Sort by total cost descending
+    summaries.sort(key=lambda s: s.total_cost, reverse=True)
+
+    return summaries
+
+
+def analyze_costs(
+    workflows: List[Workflow],
+    pricing_config: PricingConfig,
+    scaling_factors: Optional[List[int]] = None,
+    monthly_workflow_estimate: Optional[int] = None,
+) -> CostAnalysisResults:
+    """
+    Perform complete cost analysis on workflows.
+    Main entry point for Phase 3B.
+
+    Args:
+        workflows: List of Workflow objects to analyze
+        pricing_config: Pricing configuration for cost calculation
+        scaling_factors: Optional list of scale factors (default: [1, 10, 100, 1000])
+        monthly_workflow_estimate: Optional monthly workflow estimate for projections
+
+    Returns:
+        CostAnalysisResults with complete analysis
+    """
+    if scaling_factors is None:
+        scaling_factors = SCALING_FACTORS
+
+    data_quality_notes = []
+
+    # Calculate cost for each workflow
+    workflow_analyses = []
+    workflow_costs = []
+
+    for workflow in workflows:
+        analysis = calculate_workflow_cost(workflow, pricing_config)
+        workflow_analyses.append(analysis)
+        workflow_costs.append(analysis.total_cost)
+
+    # Calculate per-workflow statistics
+    if workflow_costs:
+        avg_cost = sum(workflow_costs) / len(workflow_costs)
+        sorted_costs = sorted(workflow_costs)
+        median_cost = sorted_costs[len(sorted_costs) // 2]
+        min_cost = min(workflow_costs)
+        max_cost = max(workflow_costs)
+    else:
+        avg_cost = median_cost = min_cost = max_cost = 0.0
+        data_quality_notes.append("No workflows with cost data found")
+
+    # Aggregate node costs
+    node_summaries = aggregate_node_costs(workflow_analyses)
+    top_cost_driver = node_summaries[0].node_name if node_summaries else None
+
+    # Calculate scaling projections
+    scaling_projections = project_scaling_costs(
+        avg_cost_per_workflow=avg_cost,
+        current_workflow_count=len(workflows),
+        scaling_factors=scaling_factors,
+        monthly_workflow_estimate=monthly_workflow_estimate,
+    )
+
+    # Cache effectiveness (not yet implemented - Phase 3B extension)
+    cache_effectiveness_percent = None
+    cache_savings_dollars = None
+
+    return CostAnalysisResults(
+        avg_cost_per_workflow=avg_cost,
+        median_cost_per_workflow=median_cost,
+        min_cost=min_cost,
+        max_cost=max_cost,
+        node_summaries=node_summaries,
+        top_cost_driver=top_cost_driver,
+        cache_effectiveness_percent=cache_effectiveness_percent,
+        cache_savings_dollars=cache_savings_dollars,
+        scaling_projections=scaling_projections,
+        total_workflows_analyzed=len(workflows),
+        data_quality_notes=data_quality_notes,
+    )
