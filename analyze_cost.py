@@ -164,12 +164,13 @@ class CostAnalysisResults:
 
 def extract_token_usage(trace: Trace) -> Optional[TokenUsage]:
     """
-    Extract token usage from trace outputs/inputs.
+    Extract token usage from trace.
 
     Checks multiple possible locations:
-    1. trace.outputs["usage_metadata"]
-    2. trace.inputs["usage_metadata"] (fallback)
-    3. Extracts cache_read from input_token_details if available
+    1. Top-level trace fields (total_tokens, prompt_tokens, completion_tokens)
+    2. trace.outputs["usage_metadata"]
+    3. trace.inputs["usage_metadata"] (fallback)
+    4. Extracts cache_read from input_token_details if available
 
     Args:
         trace: Trace object to extract from
@@ -177,7 +178,21 @@ def extract_token_usage(trace: Trace) -> Optional[TokenUsage]:
     Returns:
         TokenUsage if data found, None otherwise
     """
-    # Try outputs first (handle None outputs)
+    # Try top-level token fields first (from updated export)
+    if hasattr(trace, "total_tokens") and trace.total_tokens is not None:
+        # LangSmith Run objects have: total_tokens, prompt_tokens, completion_tokens
+        input_tokens = getattr(trace, "prompt_tokens", 0) or 0
+        output_tokens = getattr(trace, "completion_tokens", 0) or 0
+        total_tokens = trace.total_tokens
+
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            cached_tokens=None,  # Not available at top level
+        )
+
+    # Try outputs (handle None outputs)
     usage_data = None
     if trace.outputs is not None:
         usage_data = trace.outputs.get("usage_metadata")
