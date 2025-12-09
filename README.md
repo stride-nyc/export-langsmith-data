@@ -4,11 +4,13 @@ Export and analyze workflow trace data from LangSmith projects for performance i
 
 ## Overview
 
-This toolkit provides two main capabilities:
+This toolkit provides comprehensive capabilities for LangSmith trace analysis:
 1. **Data Export** (`export_langsmith_traces.py`) - Export trace data from LangSmith using the SDK API
-2. **Performance Analysis** (`analyze_traces.py`) - Analyze exported traces for latency, bottlenecks, and parallel execution
+2. **Performance Analysis** (`analyze_traces.py`) - Analyze exported traces for latency, bottlenecks, and parallel execution (Phase 3A)
+3. **Cost Analysis** (`analyze_cost.py`) - Calculate workflow costs with configurable pricing models (Phase 3B)
+4. **Failure Pattern Analysis** (`analyze_failures.py`) - Detect failures, retry sequences, and error patterns (Phase 3C)
 
-Designed for users on Individual Developer plans without bulk export features, with robust error handling, rate limiting, and comprehensive analysis capabilities.
+Designed for users on Individual Developer plans without bulk export features, with robust error handling, rate limiting, and comprehensive analysis capabilities. All modules follow strict TDD methodology with 99+ tests and full type safety.
 
 ## Features
 
@@ -241,17 +243,29 @@ Once you have exported trace data, use the analysis tools to gain performance in
 After generating analysis results, use the verification tool to ensure accuracy:
 
 ```bash
-# Basic verification (regenerates all statistics)
+# Basic verification - Phase 3A only (default)
 python verify_analysis_report.py traces_export.json
+
+# Verify all phases (3A + 3B + 3C)
+python verify_analysis_report.py traces_export.json --phases all
+
+# Verify specific phases
+python verify_analysis_report.py traces_export.json --phases 3b
+python verify_analysis_report.py traces_export.json --phases 3c
+python verify_analysis_report.py traces_export.json --phases "3a,3b"
 
 # Verify against expected values
 python verify_analysis_report.py traces_export.json --expected-values expected.json
+
+# Use custom pricing model for cost analysis
+python verify_analysis_report.py traces_export.json --phases 3b --pricing-model gemini_1.5_pro
 ```
 
 The verification tool:
 - Regenerates all calculations from raw data
 - Provides deterministic verification of findings
 - Optionally compares against expected values (PASS/FAIL indicators)
+- Supports selective phase verification (3a, 3b, 3c, or all)
 - Useful for auditing and validating reports
 
 **Example expected values JSON:**
@@ -269,6 +283,130 @@ The verification tool:
   }
 }
 ```
+
+### Cost Analysis (Phase 3B)
+
+Analyze workflow costs based on token usage with configurable pricing models:
+
+```python
+from analyze_cost import (
+    analyze_costs,
+    PricingConfig,
+    EXAMPLE_PRICING_CONFIGS,
+)
+from analyze_traces import load_from_json
+
+# Load exported trace data
+dataset = load_from_json("traces_export.json")
+
+# Option 1: Use example pricing config
+pricing = EXAMPLE_PRICING_CONFIGS["gemini_1.5_pro"]
+
+# Option 2: Create custom pricing config
+pricing = PricingConfig(
+    model_name="Custom Model",
+    input_tokens_per_1k=0.001,      # $1.00 per 1M input tokens
+    output_tokens_per_1k=0.003,     # $3.00 per 1M output tokens
+    cache_read_per_1k=0.0001,       # $0.10 per 1M cache read tokens (optional)
+)
+
+# Run cost analysis
+results = analyze_costs(
+    workflows=dataset.workflows,
+    pricing_config=pricing,
+    scaling_factors=[1, 10, 100, 1000],  # Optional, defaults to [1, 10, 100, 1000]
+    monthly_workflow_estimate=10000,     # Optional, for monthly cost projections
+)
+
+# Access results
+print(f"Average cost per workflow: ${results.avg_cost_per_workflow:.4f}")
+print(f"Median cost: ${results.median_cost_per_workflow:.4f}")
+print(f"Top cost driver: {results.top_cost_driver}")
+
+# View node-level breakdown
+for node in results.node_summaries[:3]:  # Top 3 nodes
+    print(f"  {node.node_name}:")
+    print(f"    Total cost: ${node.total_cost:.4f}")
+    print(f"    Executions: {node.execution_count}")
+    print(f"    Avg per execution: ${node.avg_cost_per_execution:.6f}")
+    print(f"    % of total: {node.percent_of_total_cost:.1f}%")
+
+# View scaling projections
+for scale_label, projection in results.scaling_projections.items():
+    print(f"{scale_label}: ${projection.total_cost:.2f} for {projection.workflow_count} workflows")
+    if projection.cost_per_month_30days:
+        print(f"  Monthly estimate: ${projection.cost_per_month_30days:.2f}/month")
+```
+
+**Cost Analysis Features:**
+- Configurable pricing for any LLM provider (not hard-coded)
+- Token usage extraction (input/output/cache tokens)
+- Workflow-level cost aggregation
+- Node-level cost breakdown with percentages
+- Scaling projections at 1x, 10x, 100x, 1000x volume
+- Optional monthly cost estimates
+- Data quality reporting for missing token data
+
+### Failure Pattern Analysis (Phase 3C)
+
+Detect and analyze failure patterns, retry sequences, and error distributions:
+
+```python
+from analyze_failures import (
+    analyze_failures,
+    FAILURE_STATUSES,
+    ERROR_PATTERNS,
+)
+from analyze_traces import load_from_json
+
+# Load exported trace data
+dataset = load_from_json("traces_export.json")
+
+# Run failure analysis
+results = analyze_failures(workflows=dataset.workflows)
+
+# Overall metrics
+print(f"Total workflows: {results.total_workflows}")
+print(f"Success rate: {results.overall_success_rate_percent:.1f}%")
+print(f"Failed workflows: {results.failed_workflows}")
+
+# Node failure breakdown
+print("\nTop 5 nodes by failure rate:")
+for node in results.node_failure_stats[:5]:
+    print(f"  {node.node_name}:")
+    print(f"    Failure rate: {node.failure_rate_percent:.1f}%")
+    print(f"    Failures: {node.failure_count}/{node.total_executions}")
+    print(f"    Retry sequences: {node.retry_sequences_detected}")
+    print(f"    Common errors: {node.common_error_types}")
+
+# Error distribution
+print("\nError type distribution:")
+for error_type, count in results.error_type_distribution.items():
+    print(f"  {error_type}: {count}")
+
+# Retry analysis
+print(f"\nTotal retry sequences detected: {results.total_retry_sequences}")
+if results.retry_success_rate_percent:
+    print(f"Retry success rate: {results.retry_success_rate_percent:.1f}%")
+
+# Example retry sequence details
+for retry_seq in results.retry_sequences[:3]:  # First 3 retry sequences
+    print(f"\nRetry sequence in {retry_seq.node_name}:")
+    print(f"  Attempts: {retry_seq.attempt_count}")
+    print(f"  Final status: {retry_seq.final_status}")
+    print(f"  Total duration: {retry_seq.total_duration_seconds:.1f}s")
+```
+
+**Failure Analysis Features:**
+- Status-based failure detection (error, failed, cancelled)
+- Regex-based error classification (validation, timeout, import, LLM errors)
+- Heuristic retry sequence detection:
+  - Multiple executions of same node within 5-minute window
+  - Ordered by start time
+- Node-level failure statistics
+- Retry success rate calculation
+- Error distribution across workflows
+- Quality risk identification (placeholder for future enhancement)
 
 ### Using Python API Directly
 
@@ -420,9 +558,41 @@ pytest test_analyze_traces.py::TestCSVExport -v
 pytest --cov=analyze_traces test_analyze_traces.py
 ```
 
+**Cost analysis module tests (20 tests):**
+```bash
+# Run all cost analysis tests
+pytest test_analyze_cost.py -v
+
+# Run specific test classes
+pytest test_analyze_cost.py::TestPricingConfig -v
+pytest test_analyze_cost.py::TestTokenExtraction -v
+pytest test_analyze_cost.py::TestCostCalculation -v
+
+# Run with coverage
+pytest --cov=analyze_cost test_analyze_cost.py
+```
+
+**Failure analysis module tests (15 tests):**
+```bash
+# Run all failure analysis tests
+pytest test_analyze_failures.py -v
+
+# Run specific test classes
+pytest test_analyze_failures.py::TestFailureDetection -v
+pytest test_analyze_failures.py::TestRetryDetection -v
+pytest test_analyze_failures.py::TestNodeFailureAnalysis -v
+
+# Run with coverage
+pytest --cov=analyze_failures test_analyze_failures.py
+```
+
 **Run all tests:**
 ```bash
+# Run all 99 tests (33 export + 31 analysis + 20 cost + 15 failure)
 pytest -v
+
+# Run with coverage
+pytest --cov=. -v
 ```
 
 ### Project Structure
@@ -435,11 +605,16 @@ export-langsmith-data/
 ├── PLAN.md                          # PDCA implementation plan
 ├── export-langsmith-requirements.md # Export requirements specification
 ├── export_langsmith_traces.py       # Data export script
-├── test_export_langsmith_traces.py  # Export test suite (42 tests)
+├── test_export_langsmith_traces.py  # Export test suite (33 tests)
 ├── validate_export.py               # Export validation utility
 ├── test_validate_export.py          # Validation test suite (7 tests)
-├── analyze_traces.py                # Performance analysis module
+├── analyze_traces.py                # Performance analysis module (Phase 3A)
 ├── test_analyze_traces.py           # Analysis test suite (31 tests)
+├── analyze_cost.py                  # Cost analysis module (Phase 3B)
+├── test_analyze_cost.py             # Cost analysis test suite (20 tests)
+├── analyze_failures.py              # Failure pattern analysis module (Phase 3C)
+├── test_analyze_failures.py         # Failure analysis test suite (15 tests)
+├── verify_analysis_report.py        # Verification tool for all phases
 ├── notebooks/
 │   └── langsmith_trace_performance_analysis.ipynb  # Interactive analysis notebook
 ├── output/                          # Generated CSV analysis results
@@ -490,11 +665,33 @@ This project follows the **PDCA (Plan-Do-Check-Act) framework** with strict Test
 - ✅ Code quality: Black, Ruff, mypy checks passing
 - ✅ TDD methodology: Strict RED-GREEN-REFACTOR cycles across all 5 phases
 
+### ✅ Complete - Production Ready (Continued)
+
+**Cost Analysis Module (Phase 3B):**
+- ✅ Configurable pricing models for any LLM provider
+- ✅ Token usage extraction from trace metadata
+- ✅ Cost calculation with input/output/cache token pricing
+- ✅ Workflow-level cost aggregation
+- ✅ Node-level cost breakdown with percentages
+- ✅ Scaling projections (1x, 10x, 100x, 1000x)
+- ✅ Test suite: 20 tests, full coverage
+- ✅ Code quality: Black, Ruff, mypy, Bandit checks passing
+
+**Failure Pattern Analysis Module (Phase 3C):**
+- ✅ Status-based failure detection
+- ✅ Regex-based error classification (5 patterns + unknown)
+- ✅ Heuristic retry sequence detection
+- ✅ Node-level failure statistics
+- ✅ Retry success rate calculation
+- ✅ Error distribution tracking
+- ✅ Test suite: 15 tests, full coverage
+- ✅ Code quality: Black, Ruff, mypy, Bandit checks passing
+
 ### Optional Features Not Implemented
 
 - ⏸️ Progress indication (tqdm) - Skipped in favor of simple console output
-- ⏸️ Cost analysis (Phase 3B) - Future enhancement for token usage tracking
-- ⏸️ Failure analysis (Phase 3C) - Future enhancement for error pattern detection
+- ⏸️ Validator effectiveness analysis - Placeholder in Phase 3C for future enhancement
+- ⏸️ Cache effectiveness analysis - Placeholder in Phase 3B for future enhancement
 
 ## Troubleshooting
 

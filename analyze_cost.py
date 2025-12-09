@@ -31,7 +31,7 @@ class PricingConfig:
         None  # Cost per 1K cache read tokens (if applicable)
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate pricing configuration."""
         if self.input_tokens_per_1k < 0 or self.output_tokens_per_1k < 0:
             raise ValueError("Token prices must be non-negative")

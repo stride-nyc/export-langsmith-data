@@ -216,12 +216,18 @@ def detect_retry_sequences(workflow: Workflow) -> List[RetrySequence]:
         if len(traces) < RETRY_DETECTION_CONFIG["same_node_threshold"]:
             continue
 
-        # Sort by start_time
-        sorted_traces = sorted(traces, key=lambda t: t.start_time)
+        # Filter out traces with None start_time and sort by start_time
+        valid_traces = [t for t in traces if t.start_time is not None]
+        if len(valid_traces) < RETRY_DETECTION_CONFIG["same_node_threshold"]:
+            continue
+
+        sorted_traces = sorted(valid_traces, key=lambda t: t.start_time)  # type: ignore[arg-type, return-value]
 
         # Check if traces are within time window
         first_start = sorted_traces[0].start_time
         last_start = sorted_traces[-1].start_time
+        if first_start is None or last_start is None:
+            continue
         time_diff = (last_start - first_start).total_seconds()
 
         if time_diff <= RETRY_DETECTION_CONFIG["max_time_window_seconds"]:
@@ -415,7 +421,7 @@ def analyze_failures(workflows: List[Workflow]) -> FailureAnalysisResults:
         error_type_distribution[error_type] += 1
 
     most_common_error = (
-        max(error_type_distribution, key=error_type_distribution.get)
+        max(error_type_distribution, key=lambda k: error_type_distribution[k])
         if error_type_distribution
         else None
     )
