@@ -262,3 +262,188 @@ def calculate_retry_success_rate(
     )
 
     return (successful_retries / len(retry_sequences)) * 100.0
+
+
+# ============================================================================
+# Node Failure Analysis Functions
+# ============================================================================
+
+
+def analyze_node_failures(workflows: List[Workflow]) -> List[NodeFailureStats]:
+    """
+    Analyze failure patterns by node type across workflows.
+
+    Args:
+        workflows: List of Workflow objects
+
+    Returns:
+        List of NodeFailureStats sorted by failure_rate descending
+    """
+    # Aggregate by node name
+    node_data: Dict[str, Dict[str, Any]] = {}
+
+    for workflow in workflows:
+        # Detect all retry sequences for this workflow
+        retry_sequences = detect_retry_sequences(workflow)
+
+        for trace in workflow.all_traces:
+            node_name = trace.name
+            if node_name not in node_data:
+                node_data[node_name] = {
+                    "total_executions": 0,
+                    "failure_count": 0,
+                    "success_count": 0,
+                    "retry_sequences": 0,
+                    "error_types": {},
+                }
+
+            node_data[node_name]["total_executions"] += 1
+
+            if trace.status in FAILURE_STATUSES:
+                node_data[node_name]["failure_count"] += 1
+                # Track error type
+                error_type = classify_error(trace.error)
+                if error_type not in node_data[node_name]["error_types"]:
+                    node_data[node_name]["error_types"][error_type] = 0
+                node_data[node_name]["error_types"][error_type] += 1
+            elif trace.status in SUCCESS_STATUSES:
+                node_data[node_name]["success_count"] += 1
+
+        # Count retry sequences per node
+        for retry_seq in retry_sequences:
+            if retry_seq.node_name in node_data:
+                node_data[retry_seq.node_name]["retry_sequences"] += 1
+
+    # Create NodeFailureStats objects
+    stats_list = []
+    for node_name, data in node_data.items():
+        total_exec = data["total_executions"]
+        failure_count = data["failure_count"]
+        failure_rate = (failure_count / total_exec * 100.0) if total_exec > 0 else 0.0
+
+        # Calculate avg retries when failing
+        retry_sequences = data["retry_sequences"]
+        avg_retries = (retry_sequences / failure_count) if failure_count > 0 else 0.0
+
+        stats = NodeFailureStats(
+            node_name=node_name,
+            total_executions=total_exec,
+            failure_count=failure_count,
+            success_count=data["success_count"],
+            failure_rate_percent=failure_rate,
+            retry_sequences_detected=retry_sequences,
+            avg_retries_when_failing=avg_retries,
+            common_error_types=data["error_types"],
+        )
+        stats_list.append(stats)
+
+    # Sort by failure rate descending
+    stats_list.sort(key=lambda s: s.failure_rate_percent, reverse=True)
+
+    return stats_list
+
+
+# ============================================================================
+# Main Analysis Function
+# ============================================================================
+
+
+def analyze_failures(workflows: List[Workflow]) -> FailureAnalysisResults:
+    """
+    Perform complete failure pattern analysis.
+    Main entry point for Phase 3C.
+
+    Args:
+        workflows: List of Workflow objects to analyze
+
+    Returns:
+        FailureAnalysisResults with complete analysis
+    """
+    if not workflows:
+        return FailureAnalysisResults(
+            total_workflows=0,
+            successful_workflows=0,
+            failed_workflows=0,
+            overall_success_rate_percent=0.0,
+            node_failure_stats=[],
+            highest_failure_node=None,
+            error_type_distribution={},
+            most_common_error_type=None,
+            total_retry_sequences=0,
+            retry_sequences=[],
+            retry_success_rate_percent=None,
+            avg_cost_of_retries=None,
+            validator_analyses=[],
+            redundant_validators=[],
+            quality_risks_at_scale=[],
+        )
+
+    # Detect all failures
+    all_failures = []
+    for workflow in workflows:
+        failures = detect_failures(workflow)
+        all_failures.extend(failures)
+
+    # Detect all retry sequences
+    all_retry_sequences = []
+    for workflow in workflows:
+        retries = detect_retry_sequences(workflow)
+        all_retry_sequences.extend(retries)
+
+    # Calculate overall success rate
+    total_workflows = len(workflows)
+    failed_workflows = sum(
+        1 for workflow in workflows if workflow.root_trace.status in FAILURE_STATUSES
+    )
+    successful_workflows = total_workflows - failed_workflows
+    overall_success_rate = (
+        (successful_workflows / total_workflows * 100.0) if total_workflows > 0 else 0.0
+    )
+
+    # Analyze node failures
+    node_failure_stats = analyze_node_failures(workflows)
+    highest_failure_node = (
+        node_failure_stats[0].node_name if node_failure_stats else None
+    )
+
+    # Aggregate error types
+    error_type_distribution: Dict[str, int] = {}
+    for failure in all_failures:
+        error_type = failure.error_type
+        if error_type not in error_type_distribution:
+            error_type_distribution[error_type] = 0
+        error_type_distribution[error_type] += 1
+
+    most_common_error = (
+        max(error_type_distribution, key=error_type_distribution.get)
+        if error_type_distribution
+        else None
+    )
+
+    # Calculate retry success rate
+    retry_success_rate = calculate_retry_success_rate(all_retry_sequences)
+
+    # Placeholder for validator analysis (not yet implemented)
+    validator_analyses: List[ValidatorEffectivenessAnalysis] = []
+    redundant_validators: List[str] = []
+
+    # Placeholder for quality risks (not yet implemented)
+    quality_risks_at_scale: List[str] = []
+
+    return FailureAnalysisResults(
+        total_workflows=total_workflows,
+        successful_workflows=successful_workflows,
+        failed_workflows=failed_workflows,
+        overall_success_rate_percent=overall_success_rate,
+        node_failure_stats=node_failure_stats,
+        highest_failure_node=highest_failure_node,
+        error_type_distribution=error_type_distribution,
+        most_common_error_type=most_common_error,
+        total_retry_sequences=len(all_retry_sequences),
+        retry_sequences=all_retry_sequences,
+        retry_success_rate_percent=retry_success_rate,
+        avg_cost_of_retries=None,  # Not yet implemented
+        validator_analyses=validator_analyses,
+        redundant_validators=redundant_validators,
+        quality_risks_at_scale=quality_risks_at_scale,
+    )
