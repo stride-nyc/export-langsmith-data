@@ -9,13 +9,12 @@ Date: 2025-12-09
 """
 
 import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from analyze_failures import (
     detect_failures,
     classify_error,
     detect_retry_sequences,
     calculate_retry_success_rate,
-    FailureInstance,
     RetrySequence,
 )
 from analyze_traces import Trace, Workflow
@@ -296,6 +295,132 @@ class TestRetryDetection:
         """Test retry success rate with empty list."""
         result = calculate_retry_success_rate([])
         assert result is None
+
+
+class TestNodeFailureAnalysis:
+    """Test node-level failure analysis."""
+
+    def test_analyze_node_failures_basic(self):
+        """Test basic node failure analysis."""
+        from analyze_failures import analyze_node_failures
+
+        # Create workflows with different failure patterns
+        root1 = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            duration_seconds=300.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["child-1", "child-2"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        # Validator that fails
+        child1 = Trace(
+            id="child-1",
+            name="Validator",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            duration_seconds=60.0,
+            status="error",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error="Validation failed",
+        )
+
+        # ChatModel that succeeds
+        child2 = Trace(
+            id="child-2",
+            name="ChatModel",
+            start_time=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+            duration_seconds=60.0,
+            status="success",
+            run_type="llm",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow1 = Workflow(
+            root_trace=root1,
+            nodes={"Validator": [child1], "ChatModel": [child2]},
+            all_traces=[root1, child1, child2],
+        )
+
+        result = analyze_node_failures([workflow1])
+
+        assert result is not None
+        assert len(result) >= 1
+
+        # Find Validator stats
+        validator_stats = next((s for s in result if s.node_name == "Validator"), None)
+        assert validator_stats is not None
+        assert validator_stats.total_executions == 1
+        assert validator_stats.failure_count == 1
+        assert validator_stats.failure_rate_percent == pytest.approx(100.0, abs=0.01)
+
+
+class TestMainAnalysisFunction:
+    """Test main analyze_failures() orchestration function."""
+
+    def test_analyze_failures_integration(self):
+        """Test complete failure analysis workflow."""
+        from analyze_failures import analyze_failures
+
+        # Create workflow with mixed success/failure
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            duration_seconds=300.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["child-1"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        child = Trace(
+            id="child-1",
+            name="Validator",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            duration_seconds=60.0,
+            status="error",
+            run_type="chain",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error="Validation failed",
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={"Validator": [child]},
+            all_traces=[root, child],
+        )
+
+        result = analyze_failures([workflow])
+
+        assert result is not None
+        assert result.total_workflows == 1
+        assert len(result.node_failure_stats) >= 1
+        assert result.error_type_distribution is not None
 
 
 # Run tests with: pytest test_analyze_failures.py -v
