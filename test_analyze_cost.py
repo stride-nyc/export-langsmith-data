@@ -450,4 +450,144 @@ class TestScalingProjections:
         assert result["10x"].total_cost == 0.0
 
 
+class TestNodeCostAggregation:
+    """Test node-level cost aggregation across workflows."""
+
+    def test_aggregate_node_costs_multiple_workflows(self):
+        """Test aggregating costs by node type across multiple workflows."""
+        from analyze_cost import aggregate_node_costs, WorkflowCostAnalysis, CostBreakdown, TokenUsage
+
+        # Create mock workflow analyses
+        workflow1_costs = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0,
+                total_cost=0.003,
+                token_usage=TokenUsage(1000, 500, 1500),
+            ),
+            CostBreakdown(
+                trace_id="2",
+                trace_name="Validator",
+                input_cost=0.0005,
+                output_cost=0.001,
+                cache_cost=0.0,
+                total_cost=0.0015,
+                token_usage=TokenUsage(500, 250, 750),
+            ),
+        ]
+
+        workflow2_costs = [
+            CostBreakdown(
+                trace_id="3",
+                trace_name="ChatModel",
+                input_cost=0.002,
+                output_cost=0.003,
+                cache_cost=0.0,
+                total_cost=0.005,
+                token_usage=TokenUsage(2000, 1000, 3000),
+            ),
+        ]
+
+        workflows = [
+            WorkflowCostAnalysis("wf1", 0.0045, workflow1_costs, 2250),
+            WorkflowCostAnalysis("wf2", 0.005, workflow2_costs, 3000),
+        ]
+
+        result = aggregate_node_costs(workflows)
+
+        assert result is not None
+        assert len(result) == 2  # ChatModel and Validator
+
+        # Should be sorted by total cost descending
+        assert result[0].node_name == "ChatModel"
+        assert result[0].execution_count == 2
+        assert result[0].total_cost == pytest.approx(0.008, abs=0.0001)
+        assert result[0].avg_cost_per_execution == pytest.approx(0.004, abs=0.0001)
+
+        assert result[1].node_name == "Validator"
+        assert result[1].execution_count == 1
+        assert result[1].total_cost == pytest.approx(0.0015, abs=0.0001)
+
+    def test_aggregate_node_costs_empty_workflows(self):
+        """Test aggregating with no workflows."""
+        from analyze_cost import aggregate_node_costs
+
+        result = aggregate_node_costs([])
+
+        assert result is not None
+        assert len(result) == 0
+
+
+class TestMainAnalysisFunction:
+    """Test main analyze_costs() orchestration function."""
+
+    def test_analyze_costs_integration(self):
+        """Test complete cost analysis workflow."""
+        from analyze_cost import analyze_costs, PricingConfig
+        from analyze_traces import Workflow, Trace
+        from datetime import datetime, timezone
+
+        # Create minimal workflow for testing
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            duration_seconds=300.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["child-1"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        child = Trace(
+            id="child-1",
+            name="ChatModel",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            duration_seconds=60.0,
+            status="success",
+            run_type="llm",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={
+                "usage_metadata": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "total_tokens": 1500,
+                }
+            },
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={"ChatModel": [child]},
+            all_traces=[root, child],
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.001,
+            output_tokens_per_1k=0.002,
+        )
+
+        result = analyze_costs([workflow], pricing)
+
+        assert result is not None
+        assert result.total_workflows_analyzed == 1
+        assert result.avg_cost_per_workflow > 0
+        assert len(result.node_summaries) == 1
+        assert result.node_summaries[0].node_name == "ChatModel"
+        assert len(result.scaling_projections) > 0
+        assert "1x" in result.scaling_projections
+
+
 # Run tests with: pytest test_analyze_cost.py -v
