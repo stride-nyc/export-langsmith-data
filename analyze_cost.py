@@ -106,6 +106,16 @@ class WorkflowCostAnalysis:
     cache_effectiveness_percent: Optional[float] = None  # If cache data available
 
 
+@dataclass
+class ScalingProjection:
+    """Cost projection at a specific scale factor."""
+
+    scale_factor: int
+    workflow_count: int
+    total_cost: float
+    cost_per_month_30days: Optional[float] = None  # If monthly estimate provided
+
+
 # ============================================================================
 # Token Extraction Functions
 # ============================================================================
@@ -240,3 +250,51 @@ def calculate_workflow_cost(
         node_costs=node_costs,
         total_tokens=total_tokens,
     )
+
+
+# ============================================================================
+# Scaling Projection Functions
+# ============================================================================
+
+def project_scaling_costs(
+    avg_cost_per_workflow: float,
+    current_workflow_count: int,
+    scaling_factors: List[int],
+    monthly_workflow_estimate: Optional[int] = None,
+) -> Dict[str, ScalingProjection]:
+    """
+    Project costs at different scale factors (1x, 10x, 100x, 1000x).
+
+    Args:
+        avg_cost_per_workflow: Average cost per workflow in dollars
+        current_workflow_count: Current number of workflows in dataset
+        scaling_factors: List of scale factors (e.g., [1, 10, 100, 1000])
+        monthly_workflow_estimate: Optional monthly workflow estimate for monthly cost
+
+    Returns:
+        Dict mapping scale labels ("1x", "10x", etc.) to ScalingProjection objects
+    """
+    projections = {}
+
+    for factor in scaling_factors:
+        scaled_workflow_count = current_workflow_count * factor
+        total_cost = avg_cost_per_workflow * scaled_workflow_count
+
+        # Calculate monthly cost if estimate provided
+        cost_per_month = None
+        if monthly_workflow_estimate is not None:
+            monthly_workflows_at_scale = monthly_workflow_estimate * factor
+            cost_per_month = avg_cost_per_workflow * monthly_workflows_at_scale
+
+        projection = ScalingProjection(
+            scale_factor=factor,
+            workflow_count=scaled_workflow_count,
+            total_cost=total_cost,
+            cost_per_month_30days=cost_per_month,
+        )
+
+        # Create label (1x, 10x, 100x, etc.)
+        label = f"{factor}x"
+        projections[label] = projection
+
+    return projections
