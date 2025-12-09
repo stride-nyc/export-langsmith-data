@@ -371,4 +371,83 @@ class TestWorkflowCostAnalysis:
         assert len(result.node_costs) == 0
 
 
+class TestScalingProjections:
+    """Test scaling cost projections."""
+
+    def test_project_scaling_costs_basic(self):
+        """Test basic scaling projections at 10x, 100x, 1000x."""
+        from analyze_cost import project_scaling_costs, SCALING_FACTORS
+
+        avg_cost_per_workflow = 0.01  # $0.01 per workflow
+        current_workflow_count = 100
+
+        result = project_scaling_costs(
+            avg_cost_per_workflow=avg_cost_per_workflow,
+            current_workflow_count=current_workflow_count,
+            scaling_factors=SCALING_FACTORS,
+        )
+
+        assert result is not None
+        assert "1x" in result
+        assert "10x" in result
+        assert "100x" in result
+        assert "1000x" in result
+
+        # Verify 1x (current)
+        assert result["1x"].scale_factor == 1
+        assert result["1x"].workflow_count == 100
+        assert result["1x"].total_cost == pytest.approx(1.0, abs=0.01)  # 100 * $0.01
+
+        # Verify 10x
+        assert result["10x"].scale_factor == 10
+        assert result["10x"].workflow_count == 1000
+        assert result["10x"].total_cost == pytest.approx(10.0, abs=0.01)
+
+        # Verify 100x
+        assert result["100x"].scale_factor == 100
+        assert result["100x"].workflow_count == 10000
+        assert result["100x"].total_cost == pytest.approx(100.0, abs=0.01)
+
+        # Verify 1000x
+        assert result["1000x"].scale_factor == 1000
+        assert result["1000x"].workflow_count == 100000
+        assert result["1000x"].total_cost == pytest.approx(1000.0, abs=0.01)
+
+    def test_project_scaling_costs_with_monthly(self):
+        """Test that monthly costs are calculated correctly."""
+        from analyze_cost import project_scaling_costs
+
+        avg_cost_per_workflow = 0.05
+        current_workflow_count = 50
+        monthly_estimate = 500  # Assume 500 workflows per month
+
+        result = project_scaling_costs(
+            avg_cost_per_workflow=avg_cost_per_workflow,
+            current_workflow_count=current_workflow_count,
+            scaling_factors=[1, 10],
+            monthly_workflow_estimate=monthly_estimate,
+        )
+
+        # At 1x: 500 workflows/month * $0.05 = $25/month
+        assert result["1x"].cost_per_month_30days is not None
+        assert result["1x"].cost_per_month_30days == pytest.approx(25.0, abs=0.01)
+
+        # At 10x: 5000 workflows/month * $0.05 = $250/month
+        assert result["10x"].cost_per_month_30days is not None
+        assert result["10x"].cost_per_month_30days == pytest.approx(250.0, abs=0.01)
+
+    def test_project_scaling_costs_zero_cost(self):
+        """Test handling of zero cost per workflow."""
+        from analyze_cost import project_scaling_costs
+
+        result = project_scaling_costs(
+            avg_cost_per_workflow=0.0,
+            current_workflow_count=100,
+            scaling_factors=[1, 10],
+        )
+
+        assert result["1x"].total_cost == 0.0
+        assert result["10x"].total_cost == 0.0
+
+
 # Run tests with: pytest test_analyze_cost.py -v
