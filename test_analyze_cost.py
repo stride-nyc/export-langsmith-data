@@ -264,4 +264,111 @@ class TestCostCalculation:
         assert result.total_cost == 0.0
 
 
+class TestWorkflowCostAnalysis:
+    """Test workflow-level cost analysis."""
+
+    def test_calculate_workflow_cost_single_trace(self):
+        """Test calculating cost for workflow with one LLM trace."""
+        from analyze_traces import Workflow
+
+        # Create root trace (no cost)
+        root = Trace(
+            id="root-1",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            duration_seconds=300.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=["child-1"],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        # Create child LLM trace with cost
+        child = Trace(
+            id="child-1",
+            name="ChatGoogleGenerativeAI",
+            start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            duration_seconds=60.0,
+            status="success",
+            run_type="llm",
+            parent_id="root-1",
+            child_ids=[],
+            inputs={},
+            outputs={
+                "usage_metadata": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "total_tokens": 1500,
+                }
+            },
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={"ChatGoogleGenerativeAI": [child]},
+            all_traces=[root, child],
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+        )
+
+        from analyze_cost import calculate_workflow_cost
+
+        result = calculate_workflow_cost(workflow, pricing)
+
+        assert result is not None
+        assert result.workflow_id == "root-1"
+        assert len(result.node_costs) == 1
+        assert result.total_cost == pytest.approx(0.00375, abs=0.00001)
+
+    def test_calculate_workflow_cost_no_token_data(self):
+        """Test workflow with no token data returns None."""
+        from analyze_traces import Workflow
+
+        root = Trace(
+            id="root-2",
+            name="LangGraph",
+            start_time=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2025, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            duration_seconds=300.0,
+            status="success",
+            run_type="chain",
+            parent_id=None,
+            child_ids=[],
+            inputs={},
+            outputs={},
+            error=None,
+        )
+
+        workflow = Workflow(
+            root_trace=root,
+            nodes={},
+            all_traces=[root],
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+        )
+
+        from analyze_cost import calculate_workflow_cost
+
+        result = calculate_workflow_cost(workflow, pricing)
+
+        # Should return result with zero cost, not None
+        assert result is not None
+        assert result.total_cost == 0.0
+        assert len(result.node_costs) == 0
+
+
 # Run tests with: pytest test_analyze_cost.py -v
