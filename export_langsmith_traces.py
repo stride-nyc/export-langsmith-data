@@ -410,6 +410,9 @@ class LangSmithExporter:
             "error": getattr(run, "error", None),
             "run_type": getattr(run, "run_type", None),
             "child_runs": formatted_children,
+            "total_tokens": getattr(run, "total_tokens", None),
+            "prompt_tokens": getattr(run, "prompt_tokens", None),
+            "completion_tokens": getattr(run, "completion_tokens", None),
         }
         return trace
 

@@ -431,6 +431,87 @@ class TestLangSmithExporter:
         assert trace["child_runs"] == []
 
     @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_includes_token_usage(self, mock_client_class):
+        """Test that token usage fields are exported when present."""
+        # Arrange
+        from datetime import datetime, timezone
+
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock LLM Run with token usage
+        mock_run = Mock()
+        mock_run.id = "llm_run_456"
+        mock_run.name = "ChatGoogleGenerativeAI"
+        mock_run.start_time = datetime(2025, 12, 9, 10, 0, 0, tzinfo=timezone.utc)
+        mock_run.end_time = datetime(2025, 12, 9, 10, 2, 0, tzinfo=timezone.utc)
+        mock_run.status = "success"
+        mock_run.inputs = {"messages": []}
+        mock_run.outputs = {"generations": []}
+        mock_run.error = None
+        mock_run.run_type = "llm"
+        mock_run.child_runs = []
+        # Token usage fields (as found in LangSmith API)
+        mock_run.total_tokens = 162286
+        mock_run.prompt_tokens = 128227
+        mock_run.completion_tokens = 34059
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert
+        trace = result["traces"][0]
+        assert "total_tokens" in trace
+        assert "prompt_tokens" in trace
+        assert "completion_tokens" in trace
+        assert trace["total_tokens"] == 162286
+        assert trace["prompt_tokens"] == 128227
+        assert trace["completion_tokens"] == 34059
+
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_handles_missing_tokens(self, mock_client_class):
+        """Test that missing token fields are handled gracefully."""
+        # Arrange
+        from datetime import datetime, timezone
+
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock non-LLM Run without token usage
+        mock_run = Mock()
+        mock_run.id = "chain_run_789"
+        mock_run.name = "LangGraph"
+        mock_run.start_time = datetime(2025, 12, 9, 10, 0, 0, tzinfo=timezone.utc)
+        mock_run.end_time = datetime(2025, 12, 9, 10, 5, 0, tzinfo=timezone.utc)
+        mock_run.status = "success"
+        mock_run.inputs = {}
+        mock_run.outputs = {}
+        mock_run.error = None
+        mock_run.run_type = "chain"
+        mock_run.child_runs = []
+        # No token fields (non-LLM run)
+        mock_run.total_tokens = None
+        mock_run.prompt_tokens = None
+        mock_run.completion_tokens = None
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert
+        trace = result["traces"][0]
+        # Token fields should be present but None for non-LLM runs
+        assert "total_tokens" in trace
+        assert "prompt_tokens" in trace
+        assert "completion_tokens" in trace
+        assert trace["total_tokens"] is None
+        assert trace["prompt_tokens"] is None
+        assert trace["completion_tokens"] is None
+
+    @patch("export_langsmith_traces.Client")
     def test_format_trace_data_missing_fields(self, mock_client_class):
         """Test safe handling of missing/null fields."""
         # Arrange
@@ -1147,9 +1228,36 @@ class TestIntegration:
             mock_client_class.return_value = mock_client
 
             # Create mock runs with only essential attributes
-            mock_run = Mock(spec=["id", "name"])
+            mock_run = Mock(
+                spec=[
+                    "id",
+                    "name",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "inputs",
+                    "outputs",
+                    "error",
+                    "run_type",
+                    "child_runs",
+                    "total_tokens",
+                    "prompt_tokens",
+                    "completion_tokens",
+                ]
+            )
             mock_run.id = "run_123"
             mock_run.name = "test_run"
+            mock_run.start_time = None
+            mock_run.end_time = None
+            mock_run.status = "completed"
+            mock_run.inputs = {}
+            mock_run.outputs = {}
+            mock_run.error = None
+            mock_run.run_type = "chain"
+            mock_run.child_runs = []
+            mock_run.total_tokens = None
+            mock_run.prompt_tokens = None
+            mock_run.completion_tokens = None
 
             mock_client.list_runs.return_value = [mock_run]
 
@@ -1252,6 +1360,10 @@ class TestIntegration:
                 run.error = None
                 run.run_type = "chain"
                 run.child_runs = []
+                # Token fields (None for non-LLM runs)
+                run.total_tokens = None
+                run.prompt_tokens = None
+                run.completion_tokens = None
                 all_runs.append(run)
 
             def mock_list_runs(*args, **kwargs):
@@ -1338,6 +1450,9 @@ class TestIntegration:
                     "error",
                     "run_type",
                     "child_runs",
+                    "total_tokens",
+                    "prompt_tokens",
+                    "completion_tokens",
                 ]
             )
             full_run1.id = "run_1"
@@ -1350,6 +1465,9 @@ class TestIntegration:
             full_run1.error = None
             full_run1.run_type = "chain"
             full_run1.child_runs = []  # Empty list to avoid nested Mock serialization
+            full_run1.total_tokens = None
+            full_run1.prompt_tokens = None
+            full_run1.completion_tokens = None
 
             full_run2 = Mock(
                 spec=[
@@ -1363,6 +1481,9 @@ class TestIntegration:
                     "error",
                     "run_type",
                     "child_runs",
+                    "total_tokens",
+                    "prompt_tokens",
+                    "completion_tokens",
                 ]
             )
             full_run2.id = "run_2"
@@ -1375,6 +1496,9 @@ class TestIntegration:
             full_run2.error = None
             full_run2.run_type = "chain"
             full_run2.child_runs = []
+            full_run2.total_tokens = None
+            full_run2.prompt_tokens = None
+            full_run2.completion_tokens = None
 
             # Mock behaviors
             mock_client.list_runs.return_value = iter([flat_run1, flat_run2])
