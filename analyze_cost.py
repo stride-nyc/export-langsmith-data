@@ -177,11 +177,13 @@ def extract_token_usage(trace: Trace) -> Optional[TokenUsage]:
     Returns:
         TokenUsage if data found, None otherwise
     """
-    # Try outputs first
-    usage_data = trace.outputs.get("usage_metadata")
+    # Try outputs first (handle None outputs)
+    usage_data = None
+    if trace.outputs is not None:
+        usage_data = trace.outputs.get("usage_metadata")
 
-    # Fallback to inputs
-    if not usage_data:
+    # Fallback to inputs (handle None inputs)
+    if not usage_data and trace.inputs is not None:
         usage_data = trace.inputs.get("usage_metadata")
 
     if not usage_data:
