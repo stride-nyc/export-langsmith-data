@@ -11,7 +11,7 @@ Date: 2025-12-09
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from analyze_traces import Trace, Workflow
 
 
@@ -19,14 +19,17 @@ from analyze_traces import Trace, Workflow
 # Pricing Configuration
 # ============================================================================
 
+
 @dataclass
 class PricingConfig:
     """Configurable pricing model for any LLM provider."""
 
     model_name: str
-    input_tokens_per_1k: float           # Cost per 1K input tokens
-    output_tokens_per_1k: float          # Cost per 1K output tokens
-    cache_read_per_1k: Optional[float] = None   # Cost per 1K cache read tokens (if applicable)
+    input_tokens_per_1k: float  # Cost per 1K input tokens
+    output_tokens_per_1k: float  # Cost per 1K output tokens
+    cache_read_per_1k: Optional[float] = (
+        None  # Cost per 1K cache read tokens (if applicable)
+    )
 
     def __post_init__(self):
         """Validate pricing configuration."""
@@ -41,9 +44,9 @@ class PricingConfig:
 EXAMPLE_PRICING_CONFIGS = {
     "gemini_1.5_pro": PricingConfig(
         model_name="Gemini 1.5 Pro",
-        input_tokens_per_1k=0.00125,      # $1.25 per 1M input tokens
-        output_tokens_per_1k=0.005,       # $5.00 per 1M output tokens
-        cache_read_per_1k=0.0003125,      # $0.3125 per 1M cache read tokens
+        input_tokens_per_1k=0.00125,  # $1.25 per 1M input tokens
+        output_tokens_per_1k=0.005,  # $5.00 per 1M output tokens
+        cache_read_per_1k=0.0003125,  # $0.3125 per 1M cache read tokens
     ),
 }
 
@@ -54,6 +57,7 @@ SCALING_FACTORS = [1, 10, 100, 1000]  # Current, 10x, 100x, 1000x
 # Core Data Structures
 # ============================================================================
 
+
 @dataclass
 class TokenUsage:
     """Token usage for a single trace."""
@@ -61,7 +65,7 @@ class TokenUsage:
     input_tokens: int
     output_tokens: int
     total_tokens: int
-    cached_tokens: Optional[int] = None      # From input_token_details.cache_read
+    cached_tokens: Optional[int] = None  # From input_token_details.cache_read
 
     def has_cache_data(self) -> bool:
         """Check if cache token data is available."""
@@ -138,7 +142,7 @@ class CostAnalysisResults:
     max_cost: float
 
     # Node-level breakdown
-    node_summaries: List[NodeCostSummary]    # Sorted by cost descending
+    node_summaries: List[NodeCostSummary]  # Sorted by cost descending
     top_cost_driver: Optional[str]
 
     # Cache effectiveness
@@ -156,6 +160,7 @@ class CostAnalysisResults:
 # ============================================================================
 # Token Extraction Functions
 # ============================================================================
+
 
 def extract_token_usage(trace: Trace) -> Optional[TokenUsage]:
     """
@@ -206,6 +211,7 @@ def extract_token_usage(trace: Trace) -> Optional[TokenUsage]:
 # Cost Calculation Functions
 # ============================================================================
 
+
 def calculate_trace_cost(
     token_usage: TokenUsage,
     pricing_config: PricingConfig,
@@ -225,16 +231,24 @@ def calculate_trace_cost(
         CostBreakdown with detailed cost information
     """
     # Calculate input cost: (tokens / 1000) * price_per_1k
-    input_cost = (token_usage.input_tokens / 1000.0) * pricing_config.input_tokens_per_1k
+    input_cost = (
+        token_usage.input_tokens / 1000.0
+    ) * pricing_config.input_tokens_per_1k
 
     # Calculate output cost
-    output_cost = (token_usage.output_tokens / 1000.0) * pricing_config.output_tokens_per_1k
+    output_cost = (
+        token_usage.output_tokens / 1000.0
+    ) * pricing_config.output_tokens_per_1k
 
     # Calculate cache cost if applicable
     cache_cost = 0.0
-    if (token_usage.cached_tokens is not None and
-        pricing_config.cache_read_per_1k is not None):
-        cache_cost = (token_usage.cached_tokens / 1000.0) * pricing_config.cache_read_per_1k
+    if (
+        token_usage.cached_tokens is not None
+        and pricing_config.cache_read_per_1k is not None
+    ):
+        cache_cost = (
+            token_usage.cached_tokens / 1000.0
+        ) * pricing_config.cache_read_per_1k
 
     total_cost = input_cost + output_cost + cache_cost
 
@@ -293,6 +307,7 @@ def calculate_workflow_cost(
 # Scaling Projection Functions
 # ============================================================================
 
+
 def project_scaling_costs(
     avg_cost_per_workflow: float,
     current_workflow_count: int,
@@ -341,6 +356,7 @@ def project_scaling_costs(
 # Aggregation and Analysis Functions
 # ============================================================================
 
+
 def aggregate_node_costs(
     workflow_analyses: List[WorkflowCostAnalysis],
 ) -> List[NodeCostSummary]:
@@ -378,7 +394,9 @@ def aggregate_node_costs(
         execution_count = data["execution_count"]
         total_cost = data["total_cost"]
         avg_cost = total_cost / execution_count if execution_count > 0 else 0.0
-        percent_of_total = (total_cost / total_overall_cost * 100.0) if total_overall_cost > 0 else 0.0
+        percent_of_total = (
+            (total_cost / total_overall_cost * 100.0) if total_overall_cost > 0 else 0.0
+        )
 
         summary = NodeCostSummary(
             node_name=node_name,

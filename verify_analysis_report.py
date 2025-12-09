@@ -265,11 +265,11 @@ def verify_parallel_execution(
 
 
 def generate_summary_report(
-        dataset: TraceDataset,
-        latency_dist: LatencyDistribution,
-        bottleneck_analysis: BottleneckAnalysis,
-        parallel_evidence: ParallelExecutionEvidence,
-    ) -> None:
+    dataset: TraceDataset,
+    latency_dist: LatencyDistribution,
+    bottleneck_analysis: BottleneckAnalysis,
+    parallel_evidence: ParallelExecutionEvidence,
+) -> None:
     """Generate final summary with all key findings."""
     print_header("ANALYSIS SUMMARY")
 
