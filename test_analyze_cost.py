@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from analyze_cost import (
     PricingConfig,
     TokenUsage,
-    CostBreakdown,
     extract_token_usage,
     calculate_trace_cost,
 )
@@ -208,7 +207,7 @@ class TestCostCalculation:
         pricing = PricingConfig(
             model_name="Test Model",
             input_tokens_per_1k=0.00125,  # $1.25 per 1M
-            output_tokens_per_1k=0.005,   # $5.00 per 1M
+            output_tokens_per_1k=0.005,  # $5.00 per 1M
         )
 
         result = calculate_trace_cost(token_usage, pricing)
@@ -455,7 +454,12 @@ class TestNodeCostAggregation:
 
     def test_aggregate_node_costs_multiple_workflows(self):
         """Test aggregating costs by node type across multiple workflows."""
-        from analyze_cost import aggregate_node_costs, WorkflowCostAnalysis, CostBreakdown, TokenUsage
+        from analyze_cost import (
+            aggregate_node_costs,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+        )
 
         # Create mock workflow analyses
         workflow1_costs = [
