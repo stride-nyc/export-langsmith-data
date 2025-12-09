@@ -95,6 +95,17 @@ class CostBreakdown:
         }
 
 
+@dataclass
+class WorkflowCostAnalysis:
+    """Cost analysis for a single workflow."""
+
+    workflow_id: str
+    total_cost: float
+    node_costs: List[CostBreakdown]
+    total_tokens: int
+    cache_effectiveness_percent: Optional[float] = None  # If cache data available
+
+
 # ============================================================================
 # Token Extraction Functions
 # ============================================================================
@@ -188,4 +199,44 @@ def calculate_trace_cost(
         cache_cost=cache_cost,
         total_cost=total_cost,
         token_usage=token_usage,
+    )
+
+
+def calculate_workflow_cost(
+    workflow: Workflow,
+    pricing_config: PricingConfig,
+) -> WorkflowCostAnalysis:
+    """
+    Calculate total cost and breakdown by node for a workflow.
+
+    Args:
+        workflow: Workflow to analyze
+        pricing_config: Pricing configuration
+
+    Returns:
+        WorkflowCostAnalysis with cost breakdown
+    """
+    node_costs = []
+    total_cost = 0.0
+    total_tokens = 0
+
+    # Process all traces in workflow
+    for trace in workflow.all_traces:
+        token_usage = extract_token_usage(trace)
+        if token_usage:
+            cost_breakdown = calculate_trace_cost(
+                token_usage,
+                pricing_config,
+                trace_id=trace.id,
+                trace_name=trace.name,
+            )
+            node_costs.append(cost_breakdown)
+            total_cost += cost_breakdown.total_cost
+            total_tokens += token_usage.total_tokens
+
+    return WorkflowCostAnalysis(
+        workflow_id=workflow.root_trace.id,
+        total_cost=total_cost,
+        node_costs=node_costs,
+        total_tokens=total_tokens,
     )
