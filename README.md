@@ -236,6 +236,40 @@ Once you have exported trace data, use the analysis tools to gain performance in
    - Parallel execution verification
    - CSV exports in `output/` directory
 
+### Verifying Analysis Results
+
+After generating analysis results, use the verification tool to ensure accuracy:
+
+```bash
+# Basic verification (regenerates all statistics)
+python verify_analysis_report.py traces_export.json
+
+# Verify against expected values
+python verify_analysis_report.py traces_export.json --expected-values expected.json
+```
+
+The verification tool:
+- Regenerates all calculations from raw data
+- Provides deterministic verification of findings
+- Optionally compares against expected values (PASS/FAIL indicators)
+- Useful for auditing and validating reports
+
+**Example expected values JSON:**
+```json
+{
+  "sample_size": 10,
+  "latency": {
+    "p50": 25.25,
+    "p95": 46.03,
+    "mean": 26.23
+  },
+  "parallel": {
+    "parallel_pct": 30.0,
+    "savings_s": 201.5
+  }
+}
+```
+
 ### Using Python API Directly
 
 You can also use the analysis functions programmatically:
