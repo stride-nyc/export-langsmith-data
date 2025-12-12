@@ -410,14 +410,26 @@ class LangSmithExporter:
                             if isinstance(kwargs, dict):
                                 usage_metadata = kwargs.get("usage_metadata", {})
                                 if isinstance(usage_metadata, dict):
-                                    input_token_details = usage_metadata.get("input_token_details", {})
+                                    input_token_details = usage_metadata.get(
+                                        "input_token_details", {}
+                                    )
                                     if isinstance(input_token_details, dict):
                                         if cache_read_tokens is None:
-                                            cache_read_tokens = input_token_details.get("cache_read")
+                                            cache_read_tokens = input_token_details.get(
+                                                "cache_read"
+                                            )
                                         if cache_creation_tokens is None:
-                                            cache_creation_tokens = input_token_details.get("cache_creation")
+                                            cache_creation_tokens = (
+                                                input_token_details.get(
+                                                    "cache_creation"
+                                                )
+                                            )
                                             if cache_creation_tokens is None:
-                                                cache_creation_tokens = input_token_details.get("cache_creation_input_tokens")
+                                                cache_creation_tokens = (
+                                                    input_token_details.get(
+                                                        "cache_creation_input_tokens"
+                                                    )
+                                                )
 
         # Fallback 2: Check outputs["usage_metadata"]["input_token_details"]
         if cache_read_tokens is None or cache_creation_tokens is None:
@@ -431,9 +443,13 @@ class LangSmithExporter:
                             cache_read_tokens = input_token_details.get("cache_read")
                         if cache_creation_tokens is None:
                             # Try both possible field names (use explicit None check to preserve 0 values)
-                            cache_creation_tokens = input_token_details.get("cache_creation")
+                            cache_creation_tokens = input_token_details.get(
+                                "cache_creation"
+                            )
                             if cache_creation_tokens is None:
-                                cache_creation_tokens = input_token_details.get("cache_creation_input_tokens")
+                                cache_creation_tokens = input_token_details.get(
+                                    "cache_creation_input_tokens"
+                                )
 
         # Fallback 3: Check inputs["usage_metadata"]["input_token_details"] (less common)
         if cache_read_tokens is None or cache_creation_tokens is None:
@@ -447,9 +463,13 @@ class LangSmithExporter:
                             cache_read_tokens = input_token_details.get("cache_read")
                         if cache_creation_tokens is None:
                             # Try both possible field names (use explicit None check to preserve 0 values)
-                            cache_creation_tokens = input_token_details.get("cache_creation")
+                            cache_creation_tokens = input_token_details.get(
+                                "cache_creation"
+                            )
                             if cache_creation_tokens is None:
-                                cache_creation_tokens = input_token_details.get("cache_creation_input_tokens")
+                                cache_creation_tokens = input_token_details.get(
+                                    "cache_creation_input_tokens"
+                                )
 
         trace = {
             "id": str(getattr(run, "id", None)) if hasattr(run, "id") else None,
