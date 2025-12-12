@@ -512,7 +512,9 @@ class TestLangSmithExporter:
         assert trace["completion_tokens"] is None
 
     @patch("export_langsmith_traces.Client")
-    def test_format_trace_data_includes_cache_tokens_from_nested_fields(self, mock_client_class):
+    def test_format_trace_data_includes_cache_tokens_from_nested_fields(
+        self, mock_client_class
+    ):
         """Test that cache token fields are extracted from nested input_token_details (LangSmith API structure)."""
         # Arrange
         from datetime import datetime, timezone
@@ -522,10 +524,23 @@ class TestLangSmithExporter:
 
         # Create mock LLM Run with cache token usage in nested input_token_details
         # Use spec to prevent Mock from creating cache_read_tokens/cache_creation_tokens automatically
-        mock_run = Mock(spec=[
-            "id", "name", "start_time", "end_time", "status", "inputs", "outputs",
-            "error", "run_type", "child_runs", "total_tokens", "prompt_tokens", "completion_tokens"
-        ])
+        mock_run = Mock(
+            spec=[
+                "id",
+                "name",
+                "start_time",
+                "end_time",
+                "status",
+                "inputs",
+                "outputs",
+                "error",
+                "run_type",
+                "child_runs",
+                "total_tokens",
+                "prompt_tokens",
+                "completion_tokens",
+            ]
+        )
         mock_run.id = "cached_llm_run_999"
         mock_run.name = "ChatGoogleGenerativeAI"
         mock_run.start_time = datetime(2025, 12, 11, 10, 0, 0, tzinfo=timezone.utc)
@@ -553,8 +568,8 @@ class TestLangSmithExporter:
                                     "total_tokens": 50000,
                                     "input_token_details": {
                                         "cache_read": 35000,  # Tokens read from cache
-                                        "cache_creation": 0    # Tokens written to cache
-                                    }
+                                        "cache_creation": 0,  # Tokens written to cache
+                                    },
                                 }
                             }
                         }
@@ -590,10 +605,23 @@ class TestLangSmithExporter:
         mock_client_class.return_value = mock_client
 
         # Create mock LLM Run WITHOUT cache token fields (older export or non-cached run)
-        mock_run = Mock(spec=[
-            "id", "name", "start_time", "end_time", "status", "inputs", "outputs",
-            "error", "run_type", "child_runs", "total_tokens", "prompt_tokens", "completion_tokens"
-        ])
+        mock_run = Mock(
+            spec=[
+                "id",
+                "name",
+                "start_time",
+                "end_time",
+                "status",
+                "inputs",
+                "outputs",
+                "error",
+                "run_type",
+                "child_runs",
+                "total_tokens",
+                "prompt_tokens",
+                "completion_tokens",
+            ]
+        )
         mock_run.id = "old_llm_run_888"
         mock_run.name = "ChatGoogleGenerativeAI"
         mock_run.start_time = datetime(2025, 12, 11, 10, 0, 0, tzinfo=timezone.utc)
