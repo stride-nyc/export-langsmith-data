@@ -5,7 +5,10 @@
 # Exclude directories
 exclude_dirs = ['.venv', '.pytest_cache', '__pycache__']
 
-# Skip B101 (assert_used) check for test files
+# Exclude test files from scanning
+exclude = ['/test_*.py', '*/test_*.py']
+
+# Skip B101 (assert_used) check for test files (if not excluded)
 # Asserts are acceptable and expected in test files
 skips = B101
 
