@@ -539,19 +539,28 @@ class TestLangSmithExporter:
         mock_run.total_tokens = 50000
         mock_run.prompt_tokens = 10000
         mock_run.completion_tokens = 5000
-        # Cache token fields in nested structure (actual LangSmith API format)
-        # These are nested under outputs["usage_metadata"]["input_token_details"]
+        # Cache token fields in nested LangChain message structure (actual LangSmith export format)
+        # These are nested under outputs["generations"][0][0]["message"]["kwargs"]["usage_metadata"]["input_token_details"]
         mock_run.outputs = {
-            "generations": [],
-            "usage_metadata": {
-                "input_tokens": 10000,
-                "output_tokens": 5000,
-                "total_tokens": 50000,
-                "input_token_details": {
-                    "cache_read": 35000,  # Tokens read from cache
-                    "cache_creation": 0    # Tokens written to cache (or cache_creation_input_tokens)
-                }
-            }
+            "generations": [
+                [
+                    {
+                        "message": {
+                            "kwargs": {
+                                "usage_metadata": {
+                                    "input_tokens": 10000,
+                                    "output_tokens": 5000,
+                                    "total_tokens": 50000,
+                                    "input_token_details": {
+                                        "cache_read": 35000,  # Tokens read from cache
+                                        "cache_creation": 0    # Tokens written to cache
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+            ]
         }
         # Top-level cache fields not present (not in spec, so getattr will return None)
 
