@@ -1230,13 +1230,13 @@ class TestHierarchicalDataFetching:
         # Mock the full run with children from read_run
         child1 = Mock()
         child1.id = "child-1"
-        child1.name = "generate_spec"
+        child1.name = "process_data"
         child1.run_type = "chain"
         child1.child_runs = []
 
         child2 = Mock()
         child2.id = "child-2"
-        child2.name = "xml_transformation"
+        child2.name = "transform_output"
         child2.run_type = "chain"
         child2.child_runs = []
 
@@ -1258,8 +1258,8 @@ class TestHierarchicalDataFetching:
         assert runs[0].id == "parent-123"
         assert runs[0].child_runs is not None
         assert len(runs[0].child_runs) == 2
-        assert runs[0].child_runs[0].name == "generate_spec"
-        assert runs[0].child_runs[1].name == "xml_transformation"
+        assert runs[0].child_runs[0].name == "process_data"
+        assert runs[0].child_runs[1].name == "transform_output"
 
         # Verify read_run was called with load_child_runs=True
         mock_client.read_run.assert_called_once_with("parent-123", load_child_runs=True)

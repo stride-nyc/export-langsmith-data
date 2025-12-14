@@ -26,7 +26,7 @@ class Trace:
 
     Attributes:
         id: Unique identifier for the trace
-        name: Name of the trace (e.g., 'LangGraph', 'generate_spec')
+        name: Name of the trace (e.g., 'LangGraph', 'process_data')
         start_time: When the trace started execution
         end_time: When the trace completed
         duration_seconds: Total execution time in seconds
@@ -65,7 +65,7 @@ class Workflow:
     Represents a complete workflow execution with hierarchical structure.
 
     A workflow typically represents a LangGraph execution with multiple
-    child nodes (e.g., generate_spec, validators, xml_transformation).
+    child nodes (e.g., process_data, validators, transform_output).
 
     Attributes:
         root_trace: The root/parent trace (usually LangGraph)
@@ -404,7 +404,7 @@ class NodePerformance:
     Performance metrics for a single node type across workflows.
 
     Attributes:
-        node_name: Name of the node (e.g., 'generate_spec', 'xml_transformation')
+        node_name: Name of the node (e.g., 'process_data', 'transform_output')
         execution_count: Number of times this node executed across all workflows
         avg_duration_seconds: Average execution time in seconds
         median_duration_seconds: Median execution time in seconds

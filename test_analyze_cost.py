@@ -594,4 +594,453 @@ class TestMainAnalysisFunction:
         assert "1x" in result.scaling_projections
 
 
+class TestCacheEffectiveness:
+    """Test cache effectiveness analysis functions."""
+
+    def test_calculate_cache_hit_rate_all_cached(self):
+        """Test cache hit rate when all traces have cache data."""
+        from analyze_cost import (
+            calculate_cache_hit_rate,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+        )
+
+        # Create workflow analysis with all traces having cache data
+        costs_with_cache = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0001,
+                total_cost=0.0031,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=800),
+            ),
+            CostBreakdown(
+                trace_id="2",
+                trace_name="Validator",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0002,
+                total_cost=0.0032,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=900),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.0063, costs_with_cache, 3000)]
+
+        result = calculate_cache_hit_rate(workflows)
+
+        # All 2 traces have cache data = 100%
+        assert result == pytest.approx(100.0, abs=0.01)
+
+    def test_calculate_cache_hit_rate_partial_cached(self):
+        """Test cache hit rate when only some traces have cache data."""
+        from analyze_cost import (
+            calculate_cache_hit_rate,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+        )
+
+        # Mix of cached and non-cached traces
+        costs_mixed = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0001,
+                total_cost=0.0031,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=800),
+            ),
+            CostBreakdown(
+                trace_id="2",
+                trace_name="Validator",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0,
+                total_cost=0.003,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=None),
+            ),
+            CostBreakdown(
+                trace_id="3",
+                trace_name="Parser",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0,
+                total_cost=0.003,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=None),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.0091, costs_mixed, 4500)]
+
+        result = calculate_cache_hit_rate(workflows)
+
+        # 1 out of 3 traces have cache data = 33.33%
+        assert result == pytest.approx(33.33, abs=0.01)
+
+    def test_calculate_cache_hit_rate_no_traces(self):
+        """Test cache hit rate with no traces returns 0."""
+        from analyze_cost import calculate_cache_hit_rate
+
+        result = calculate_cache_hit_rate([])
+
+        assert result == 0.0
+
+    def test_calculate_cache_hit_rate_no_cache_data(self):
+        """Test cache hit rate when no traces have cache data."""
+        from analyze_cost import (
+            calculate_cache_hit_rate,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+        )
+
+        costs_no_cache = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0,
+                total_cost=0.003,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=None),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.003, costs_no_cache, 1500)]
+
+        result = calculate_cache_hit_rate(workflows)
+
+        # 0 out of 1 traces have cache data = 0%
+        assert result == 0.0
+
+    def test_calculate_cache_savings_with_cache(self):
+        """Test calculating cost savings from cache usage."""
+        from analyze_cost import (
+            calculate_cache_savings,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+            PricingConfig,
+        )
+
+        # Create pricing config
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,  # $1.25 per 1M input tokens
+            output_tokens_per_1k=0.005,  # $5.00 per 1M output tokens
+            cache_read_per_1k=0.0003125,  # $0.3125 per 1M cache read tokens
+        )
+
+        # Trace with 1000 input tokens, 800 cached
+        # Without cache: 1000 * 0.00125 / 1000 = $0.00125
+        # With cache: 800 * 0.0003125 / 1000 = $0.00025
+        # Savings: $0.001 per trace
+        costs_with_cache = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.00125,
+                output_cost=0.0025,
+                cache_cost=0.00025,
+                total_cost=0.004,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=800),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.004, costs_with_cache, 1500)]
+
+        result = calculate_cache_savings(workflows, pricing)
+
+        # Savings: (800 tokens * input_price) - (800 tokens * cache_price)
+        # = (800 * 0.00125 / 1000) - (800 * 0.0003125 / 1000)
+        # = 0.001 - 0.00025 = 0.00075
+        assert result == pytest.approx(0.00075, abs=0.00001)
+
+    def test_calculate_cache_savings_no_cache(self):
+        """Test that no cache usage results in zero savings."""
+        from analyze_cost import (
+            calculate_cache_savings,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+            PricingConfig,
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+        )
+
+        costs_no_cache = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.00125,
+                output_cost=0.0025,
+                cache_cost=0.0,
+                total_cost=0.00375,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=None),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.00375, costs_no_cache, 1500)]
+
+        result = calculate_cache_savings(workflows, pricing)
+
+        # No cache usage = no savings
+        assert result == 0.0
+
+    def test_calculate_cache_savings_multiple_traces(self):
+        """Test calculating savings across multiple traces."""
+        from analyze_cost import (
+            calculate_cache_savings,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+            PricingConfig,
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+            cache_read_per_1k=0.0003125,
+        )
+
+        # Two traces with cache, one without
+        costs_mixed = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.00125,
+                output_cost=0.0025,
+                cache_cost=0.00025,
+                total_cost=0.004,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=800),
+            ),
+            CostBreakdown(
+                trace_id="2",
+                trace_name="Validator",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0002,
+                total_cost=0.0032,
+                token_usage=TokenUsage(800, 400, 1200, cached_tokens=600),
+            ),
+            CostBreakdown(
+                trace_id="3",
+                trace_name="Parser",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0,
+                total_cost=0.003,
+                token_usage=TokenUsage(800, 400, 1200, cached_tokens=None),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.0102, costs_mixed, 3900)]
+
+        result = calculate_cache_savings(workflows, pricing)
+
+        # Trace 1: (800 * 0.00125 / 1000) - (800 * 0.0003125 / 1000) = 0.00075
+        # Trace 2: (600 * 0.00125 / 1000) - (600 * 0.0003125 / 1000) = 0.0005625
+        # Trace 3: 0 (no cache)
+        # Total: 0.00075 + 0.0005625 = 0.0013125
+        assert result == pytest.approx(0.0013125, abs=0.00001)
+
+    def test_calculate_cache_savings_no_cache_pricing(self):
+        """Test that missing cache pricing returns zero savings."""
+        from analyze_cost import (
+            calculate_cache_savings,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+            PricingConfig,
+        )
+
+        # Pricing without cache_read_per_1k
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+        )
+
+        costs_with_cache = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.00125,
+                output_cost=0.0025,
+                cache_cost=0.0,
+                total_cost=0.00375,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=800),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.00375, costs_with_cache, 1500)]
+
+        result = calculate_cache_savings(workflows, pricing)
+
+        # No cache pricing configured = can't calculate savings
+        assert result == 0.0
+
+    def test_compare_cached_vs_fresh_costs_with_cache(self):
+        """Test comparing costs with cache vs without cache."""
+        from analyze_cost import (
+            compare_cached_vs_fresh_costs,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+            PricingConfig,
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+            cache_read_per_1k=0.0003125,
+        )
+
+        # Two traces: one with cache, one without
+        costs = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.00125,
+                output_cost=0.0025,
+                cache_cost=0.00025,
+                total_cost=0.004,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=800),
+            ),
+            CostBreakdown(
+                trace_id="2",
+                trace_name="Validator",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.0,
+                total_cost=0.003,
+                token_usage=TokenUsage(800, 400, 1200, cached_tokens=None),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.007, costs, 2700)]
+
+        result = compare_cached_vs_fresh_costs(workflows, pricing)
+
+        # Cost with cache: 0.004 + 0.003 = 0.007
+        assert result.cost_with_cache == pytest.approx(0.007, abs=0.0001)
+
+        # Cost without cache: trace 1 would be 0.00125 + 0.0025 + (800 * 0.00125 / 1000)
+        # = 0.00125 + 0.0025 + 0.001 = 0.00475
+        # trace 2 stays same: 0.003
+        # Total: 0.00775
+        assert result.cost_without_cache == pytest.approx(0.00775, abs=0.0001)
+
+        # Savings: 0.00775 - 0.007 = 0.00075
+        assert result.total_savings == pytest.approx(0.00075, abs=0.00001)
+
+        # Savings percent: (0.00075 / 0.00775) * 100 = 9.68%
+        assert result.savings_percent == pytest.approx(9.68, abs=0.01)
+
+        assert result.traces_analyzed == 2
+        assert result.traces_with_cache == 1
+
+    def test_compare_cached_vs_fresh_costs_no_cache(self):
+        """Test comparison when no traces use cache."""
+        from analyze_cost import (
+            compare_cached_vs_fresh_costs,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+            PricingConfig,
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+        )
+
+        costs = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.00125,
+                output_cost=0.0025,
+                cache_cost=0.0,
+                total_cost=0.00375,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=None),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.00375, costs, 1500)]
+
+        result = compare_cached_vs_fresh_costs(workflows, pricing)
+
+        # No cache usage, so costs are identical
+        assert result.cost_with_cache == pytest.approx(0.00375, abs=0.0001)
+        assert result.cost_without_cache == pytest.approx(0.00375, abs=0.0001)
+        assert result.total_savings == 0.0
+        assert result.savings_percent == 0.0
+        assert result.traces_analyzed == 1
+        assert result.traces_with_cache == 0
+
+    def test_compare_cached_vs_fresh_costs_all_cached(self):
+        """Test comparison when all traces use cache."""
+        from analyze_cost import (
+            compare_cached_vs_fresh_costs,
+            WorkflowCostAnalysis,
+            CostBreakdown,
+            TokenUsage,
+            PricingConfig,
+        )
+
+        pricing = PricingConfig(
+            model_name="Test Model",
+            input_tokens_per_1k=0.00125,
+            output_tokens_per_1k=0.005,
+            cache_read_per_1k=0.0003125,
+        )
+
+        costs = [
+            CostBreakdown(
+                trace_id="1",
+                trace_name="ChatModel",
+                input_cost=0.00125,
+                output_cost=0.0025,
+                cache_cost=0.00025,
+                total_cost=0.004,
+                token_usage=TokenUsage(1000, 500, 1500, cached_tokens=800),
+            ),
+            CostBreakdown(
+                trace_id="2",
+                trace_name="Validator",
+                input_cost=0.001,
+                output_cost=0.002,
+                cache_cost=0.00015,
+                total_cost=0.00315,
+                token_usage=TokenUsage(800, 400, 1200, cached_tokens=480),
+            ),
+        ]
+
+        workflows = [WorkflowCostAnalysis("wf1", 0.00715, costs, 2700)]
+
+        result = compare_cached_vs_fresh_costs(workflows, pricing)
+
+        # Both traces use cache
+        assert result.traces_analyzed == 2
+        assert result.traces_with_cache == 2
+
+        # Savings should be positive
+        assert result.total_savings > 0
+        assert result.savings_percent > 0
+        assert result.cost_without_cache > result.cost_with_cache
+
+
 # Run tests with: pytest test_analyze_cost.py -v
