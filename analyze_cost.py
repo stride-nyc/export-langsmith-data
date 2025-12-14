@@ -132,6 +132,18 @@ class NodeCostSummary:
 
 
 @dataclass
+class CacheCostComparison:
+    """Comparison of costs with cache vs without cache."""
+
+    cost_with_cache: float  # Actual cost using cache
+    cost_without_cache: float  # Hypothetical cost if no cache used
+    total_savings: float  # Dollar savings from using cache
+    savings_percent: float  # Percentage savings (0-100)
+    traces_analyzed: int  # Total number of traces analyzed
+    traces_with_cache: int  # Number of traces that used cache
+
+
+@dataclass
 class CostAnalysisResults:
     """Complete cost analysis results."""
 
@@ -185,17 +197,58 @@ def extract_token_usage(trace: Trace) -> Optional[TokenUsage]:
         output_tokens = getattr(trace, "completion_tokens", 0) or 0
         total_tokens = trace.total_tokens
 
+        # Extract cache tokens from LangChain message format before returning
+        cached_tokens = None
+        if trace.outputs is not None and isinstance(trace.outputs, dict):
+            if "generations" in trace.outputs:
+                generations = trace.outputs.get("generations", [[]])
+                if generations and len(generations) > 0 and len(generations[0]) > 0:
+                    message = generations[0][0]
+                    if isinstance(message, dict):
+                        message_obj = message.get("message", {})
+                        if isinstance(message_obj, dict):
+                            kwargs = message_obj.get("kwargs", {})
+                            if isinstance(kwargs, dict):
+                                usage_metadata = kwargs.get("usage_metadata", {})
+                                if isinstance(usage_metadata, dict):
+                                    input_token_details = usage_metadata.get(
+                                        "input_token_details", {}
+                                    )
+                                    if isinstance(input_token_details, dict):
+                                        cached_tokens = input_token_details.get(
+                                            "cache_read"
+                                        )
+
         return TokenUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
-            cached_tokens=None,  # Not available at top level
+            cached_tokens=cached_tokens,
         )
 
     # Try outputs (handle None outputs)
     usage_data = None
+    cached_tokens = None
+
     if trace.outputs is not None:
-        usage_data = trace.outputs.get("usage_metadata")
+        # First try LangChain message format (where cache data lives)
+        # Path: outputs.generations[0][0].message.kwargs.usage_metadata
+        if "generations" in trace.outputs:
+            generations = trace.outputs.get("generations", [[]])
+            if generations and len(generations) > 0 and len(generations[0]) > 0:
+                message = generations[0][0]
+                if isinstance(message, dict):
+                    message_obj = message.get("message", {})
+                    if isinstance(message_obj, dict):
+                        kwargs = message_obj.get("kwargs", {})
+                        if isinstance(kwargs, dict):
+                            usage_metadata = kwargs.get("usage_metadata", {})
+                            if isinstance(usage_metadata, dict) and usage_metadata:
+                                usage_data = usage_metadata
+
+        # Fallback to direct usage_metadata
+        if not usage_data:
+            usage_data = trace.outputs.get("usage_metadata")
 
     # Fallback to inputs (handle None inputs)
     if not usage_data and trace.inputs is not None:
@@ -210,7 +263,6 @@ def extract_token_usage(trace: Trace) -> Optional[TokenUsage]:
     total_tokens = usage_data.get("total_tokens", input_tokens + output_tokens)
 
     # Extract cache tokens if available
-    cached_tokens = None
     if "input_token_details" in usage_data:
         token_details = usage_data["input_token_details"]
         if isinstance(token_details, dict):
@@ -430,6 +482,167 @@ def aggregate_node_costs(
     return summaries
 
 
+# ============================================================================
+# Cache Effectiveness Functions
+# ============================================================================
+
+
+def calculate_cache_hit_rate(workflow_analyses: List[WorkflowCostAnalysis]) -> float:
+    """
+    Calculate percentage of traces that used cache.
+
+    Args:
+        workflow_analyses: List of WorkflowCostAnalysis objects
+
+    Returns:
+        Percentage of traces with cache data (0-100)
+    """
+    if not workflow_analyses:
+        return 0.0
+
+    total_traces = 0
+    cached_traces = 0
+
+    for workflow_analysis in workflow_analyses:
+        for cost_breakdown in workflow_analysis.node_costs:
+            total_traces += 1
+            if cost_breakdown.token_usage.has_cache_data():
+                cached_traces += 1
+
+    if total_traces == 0:
+        return 0.0
+
+    return (cached_traces / total_traces) * 100.0
+
+
+def calculate_cache_savings(
+    workflow_analyses: List[WorkflowCostAnalysis],
+    pricing_config: PricingConfig,
+) -> float:
+    """
+    Calculate total cost savings from cache usage.
+
+    Compares actual cache costs to what costs would have been if cache tokens
+    were charged at input token rate.
+
+    Args:
+        workflow_analyses: List of WorkflowCostAnalysis objects
+        pricing_config: Pricing configuration
+
+    Returns:
+        Total savings in dollars from using cache
+    """
+    if not workflow_analyses:
+        return 0.0
+
+    if pricing_config.cache_read_per_1k is None:
+        return 0.0  # Cannot calculate savings without cache pricing
+
+    total_savings = 0.0
+
+    for workflow_analysis in workflow_analyses:
+        for cost_breakdown in workflow_analysis.node_costs:
+            if cost_breakdown.token_usage.has_cache_data():
+                cached_tokens = cost_breakdown.token_usage.cached_tokens
+                if cached_tokens is None:
+                    continue
+
+                # Cost if these tokens were charged at input rate
+                cost_without_cache = (
+                    cached_tokens / 1000.0
+                ) * pricing_config.input_tokens_per_1k
+
+                # Actual cost at cache rate
+                cost_with_cache = (
+                    cached_tokens / 1000.0
+                ) * pricing_config.cache_read_per_1k
+
+                # Savings is the difference
+                savings = cost_without_cache - cost_with_cache
+                total_savings += savings
+
+    return total_savings
+
+
+def compare_cached_vs_fresh_costs(
+    workflow_analyses: List[WorkflowCostAnalysis],
+    pricing_config: PricingConfig,
+) -> CacheCostComparison:
+    """
+    Compare total costs with cache vs hypothetical costs without cache.
+
+    Provides detailed breakdown showing actual cost using cache vs what cost
+    would have been if cache tokens were charged at input token rate.
+
+    Args:
+        workflow_analyses: List of WorkflowCostAnalysis objects
+        pricing_config: Pricing configuration
+
+    Returns:
+        CacheCostComparison with detailed cost comparison
+    """
+    cost_with_cache = 0.0
+    cost_without_cache = 0.0
+    traces_analyzed = 0
+    traces_with_cache = 0
+
+    for workflow_analysis in workflow_analyses:
+        for cost_breakdown in workflow_analysis.node_costs:
+            traces_analyzed += 1
+
+            # Add actual cost (with cache)
+            cost_with_cache += cost_breakdown.total_cost
+
+            # Calculate hypothetical cost without cache
+            if cost_breakdown.token_usage.has_cache_data():
+                traces_with_cache += 1
+
+                # If cache pricing available, calculate what cost would have been
+                if pricing_config.cache_read_per_1k is not None:
+                    cached_tokens = cost_breakdown.token_usage.cached_tokens
+                    if cached_tokens is None:
+                        cost_without_cache += cost_breakdown.total_cost
+                        continue
+
+                    # Remove actual cache cost
+                    cost_without_this_cache = (
+                        cost_breakdown.total_cost - cost_breakdown.cache_cost
+                    )
+
+                    # Add what it would cost at input token rate
+                    hypothetical_input_cost = (
+                        cached_tokens / 1000.0
+                    ) * pricing_config.input_tokens_per_1k
+
+                    cost_without_cache += (
+                        cost_without_this_cache + hypothetical_input_cost
+                    )
+                else:
+                    # No cache pricing, so cost would be same
+                    cost_without_cache += cost_breakdown.total_cost
+            else:
+                # No cache data, cost is same with or without cache
+                cost_without_cache += cost_breakdown.total_cost
+
+    # Calculate savings
+    total_savings = cost_without_cache - cost_with_cache
+
+    # Calculate savings percentage
+    if cost_without_cache > 0:
+        savings_percent = (total_savings / cost_without_cache) * 100.0
+    else:
+        savings_percent = 0.0
+
+    return CacheCostComparison(
+        cost_with_cache=cost_with_cache,
+        cost_without_cache=cost_without_cache,
+        total_savings=total_savings,
+        savings_percent=savings_percent,
+        traces_analyzed=traces_analyzed,
+        traces_with_cache=traces_with_cache,
+    )
+
+
 def analyze_costs(
     workflows: List[Workflow],
     pricing_config: PricingConfig,
@@ -486,9 +699,9 @@ def analyze_costs(
         monthly_workflow_estimate=monthly_workflow_estimate,
     )
 
-    # Cache effectiveness (not yet implemented - Phase 3B extension)
-    cache_effectiveness_percent = None
-    cache_savings_dollars = None
+    # Cache effectiveness analysis
+    cache_effectiveness_percent = calculate_cache_hit_rate(workflow_analyses)
+    cache_savings_dollars = calculate_cache_savings(workflow_analyses, pricing_config)
 
     return CostAnalysisResults(
         avg_cost_per_workflow=avg_cost,
