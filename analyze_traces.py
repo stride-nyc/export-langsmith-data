@@ -26,17 +26,20 @@ class Trace:
 
     Attributes:
         id: Unique identifier for the trace
-        name: Name of the trace (e.g., 'LangGraph', 'generate_spec')
+        name: Name of the trace (e.g., 'LangGraph', 'process_data')
         start_time: When the trace started execution
         end_time: When the trace completed
         duration_seconds: Total execution time in seconds
-        status: Execution status ('success', 'error', etc.)
+        status: Execution status ('success', 'error', etc.')
         run_type: Type of run ('chain', 'llm', 'tool')
         parent_id: ID of parent trace (None for root traces)
         child_ids: List of child trace IDs
         inputs: Input parameters to the trace
         outputs: Output results from the trace
         error: Error message if execution failed
+        total_tokens: Total tokens used (None for non-LLM traces)
+        prompt_tokens: Input/prompt tokens (None for non-LLM traces)
+        completion_tokens: Output/completion tokens (None for non-LLM traces)
     """
 
     id: str
@@ -51,6 +54,9 @@ class Trace:
     inputs: Dict[str, Any]
     outputs: Dict[str, Any]
     error: Optional[str]
+    total_tokens: Optional[int] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
 
 
 @dataclass
@@ -59,7 +65,7 @@ class Workflow:
     Represents a complete workflow execution with hierarchical structure.
 
     A workflow typically represents a LangGraph execution with multiple
-    child nodes (e.g., generate_spec, validators, xml_transformation).
+    child nodes (e.g., process_data, validators, transform_output).
 
     Attributes:
         root_trace: The root/parent trace (usually LangGraph)
@@ -140,6 +146,9 @@ def _build_trace_from_dict(
         inputs=trace_dict.get("inputs", {}),
         outputs=trace_dict.get("outputs", {}),
         error=trace_dict.get("error"),
+        total_tokens=trace_dict.get("total_tokens"),
+        prompt_tokens=trace_dict.get("prompt_tokens"),
+        completion_tokens=trace_dict.get("completion_tokens"),
     )
 
     return trace
@@ -395,7 +404,7 @@ class NodePerformance:
     Performance metrics for a single node type across workflows.
 
     Attributes:
-        node_name: Name of the node (e.g., 'generate_spec', 'xml_transformation')
+        node_name: Name of the node (e.g., 'process_data', 'transform_output')
         execution_count: Number of times this node executed across all workflows
         avg_duration_seconds: Average execution time in seconds
         median_duration_seconds: Median execution time in seconds

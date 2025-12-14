@@ -101,7 +101,7 @@ class TestWorkflowDataStructure:
 
         child = Trace(
             id="child-1",
-            name="generate_spec",
+            name="process_data",
             start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
             end_time=datetime(2025, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
             duration_seconds=120.0,
@@ -116,12 +116,12 @@ class TestWorkflowDataStructure:
 
         # Act
         workflow = Workflow(
-            root_trace=root, nodes={"generate_spec": [child]}, all_traces=[root, child]
+            root_trace=root, nodes={"process_data": [child]}, all_traces=[root, child]
         )
 
         # Assert
         assert workflow.root_trace.id == "root-1"
-        assert "generate_spec" in workflow.nodes
+        assert "process_data" in workflow.nodes
         assert len(workflow.all_traces) == 2
 
     def test_workflow_total_duration_property(self):
@@ -251,7 +251,7 @@ class TestLoadFromJSON:
                     "child_runs": [
                         {
                             "id": "child-1",
-                            "name": "generate_spec",
+                            "name": "process_data",
                             "start_time": "2025-01-01T12:01:00+00:00",
                             "end_time": "2025-01-01T12:03:00+00:00",
                             "duration_seconds": 120.0,
@@ -541,7 +541,7 @@ class TestBottleneckIdentification:
 
         # Arrange & Act
         node_perf = NodePerformance(
-            node_name="generate_spec",
+            node_name="process_data",
             execution_count=100,
             avg_duration_seconds=180.5,
             median_duration_seconds=175.2,
@@ -551,7 +551,7 @@ class TestBottleneckIdentification:
         )
 
         # Assert
-        assert node_perf.node_name == "generate_spec"
+        assert node_perf.node_name == "process_data"
         assert node_perf.execution_count == 100
         assert node_perf.avg_duration_seconds == 180.5
         assert node_perf.avg_percent_of_workflow == 15.2
@@ -562,7 +562,7 @@ class TestBottleneckIdentification:
 
         # Arrange
         node1 = NodePerformance(
-            node_name="xml_transformation",
+            node_name="transform_output",
             execution_count=100,
             avg_duration_seconds=250.8,
             median_duration_seconds=245.0,
@@ -572,7 +572,7 @@ class TestBottleneckIdentification:
         )
 
         node2 = NodePerformance(
-            node_name="generate_spec",
+            node_name="process_data",
             execution_count=100,
             avg_duration_seconds=180.5,
             median_duration_seconds=175.2,
@@ -584,14 +584,14 @@ class TestBottleneckIdentification:
         # Act
         analysis = BottleneckAnalysis(
             node_performances=[node1, node2],
-            primary_bottleneck="xml_transformation",
-            top_3_bottlenecks=["xml_transformation", "generate_spec"],
+            primary_bottleneck="transform_output",
+            top_3_bottlenecks=["transform_output", "process_data"],
         )
 
         # Assert
         assert len(analysis.node_performances) == 2
-        assert analysis.primary_bottleneck == "xml_transformation"
-        assert analysis.top_3_bottlenecks[0] == "xml_transformation"
+        assert analysis.primary_bottleneck == "transform_output"
+        assert analysis.top_3_bottlenecks[0] == "transform_output"
 
     def test_identify_bottlenecks_basic(self):
         """Test basic bottleneck identification with simple workflow."""
@@ -615,7 +615,7 @@ class TestBottleneckIdentification:
 
         node1 = Trace(
             id="node-1",
-            name="generate_spec",
+            name="process_data",
             start_time=None,
             end_time=None,
             duration_seconds=200.0,  # 33% of workflow
@@ -630,7 +630,7 @@ class TestBottleneckIdentification:
 
         node2 = Trace(
             id="node-2",
-            name="xml_transformation",
+            name="transform_output",
             start_time=None,
             end_time=None,
             duration_seconds=300.0,  # 50% of workflow (bottleneck)
@@ -661,8 +661,8 @@ class TestBottleneckIdentification:
         workflow = Workflow(
             root_trace=root,
             nodes={
-                "generate_spec": [node1],
-                "xml_transformation": [node2],
+                "process_data": [node1],
+                "transform_output": [node2],
                 "import_step": [node3],
             },
             all_traces=[root, node1, node2, node3],
@@ -673,8 +673,8 @@ class TestBottleneckIdentification:
 
         # Assert
         assert len(result.node_performances) == 3
-        assert result.primary_bottleneck == "xml_transformation"
-        assert result.node_performances[0].node_name == "xml_transformation"
+        assert result.primary_bottleneck == "transform_output"
+        assert result.node_performances[0].node_name == "transform_output"
         assert result.node_performances[0].avg_duration_seconds == 300.0
         assert result.node_performances[0].execution_count == 1
 
@@ -1105,7 +1105,7 @@ class TestParallelExecutionVerification:
 
         node1 = Trace(
             id="node-1",
-            name="generate_spec",
+            name="process_data",
             start_time=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
             end_time=datetime(2025, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
             duration_seconds=120.0,
@@ -1119,7 +1119,7 @@ class TestParallelExecutionVerification:
         )
 
         workflow = Workflow(
-            root_trace=root, nodes={"generate_spec": [node1]}, all_traces=[root, node1]
+            root_trace=root, nodes={"process_data": [node1]}, all_traces=[root, node1]
         )
 
         # Act
@@ -1169,7 +1169,7 @@ class TestCSVExport:
 
         # Arrange
         node1 = NodePerformance(
-            node_name="xml_transformation",
+            node_name="transform_output",
             execution_count=100,
             avg_duration_seconds=250.8,
             median_duration_seconds=245.0,
@@ -1179,7 +1179,7 @@ class TestCSVExport:
         )
 
         node2 = NodePerformance(
-            node_name="generate_spec",
+            node_name="process_data",
             execution_count=100,
             avg_duration_seconds=180.5,
             median_duration_seconds=175.2,
@@ -1190,8 +1190,8 @@ class TestCSVExport:
 
         analysis = BottleneckAnalysis(
             node_performances=[node1, node2],
-            primary_bottleneck="xml_transformation",
-            top_3_bottlenecks=["xml_transformation", "generate_spec"],
+            primary_bottleneck="transform_output",
+            top_3_bottlenecks=["transform_output", "process_data"],
         )
 
         # Act
@@ -1202,8 +1202,8 @@ class TestCSVExport:
             "node_name,execution_count,avg_duration_seconds,median_duration_seconds"
             in csv_output
         )
-        assert "xml_transformation,100,250.8,245.0" in csv_output
-        assert "generate_spec,100,180.5,175.2" in csv_output
+        assert "transform_output,100,250.8,245.0" in csv_output
+        assert "process_data,100,180.5,175.2" in csv_output
 
     def test_parallel_execution_evidence_to_csv(self):
         """Test exporting ParallelExecutionEvidence to CSV format."""

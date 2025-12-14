@@ -431,6 +431,231 @@ class TestLangSmithExporter:
         assert trace["child_runs"] == []
 
     @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_includes_token_usage(self, mock_client_class):
+        """Test that token usage fields are exported when present."""
+        # Arrange
+        from datetime import datetime, timezone
+
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock LLM Run with token usage
+        mock_run = Mock()
+        mock_run.id = "llm_run_456"
+        mock_run.name = "ChatGoogleGenerativeAI"
+        mock_run.start_time = datetime(2025, 12, 9, 10, 0, 0, tzinfo=timezone.utc)
+        mock_run.end_time = datetime(2025, 12, 9, 10, 2, 0, tzinfo=timezone.utc)
+        mock_run.status = "success"
+        mock_run.inputs = {"messages": []}
+        mock_run.outputs = {"generations": []}
+        mock_run.error = None
+        mock_run.run_type = "llm"
+        mock_run.child_runs = []
+        # Token usage fields (as found in LangSmith API)
+        mock_run.total_tokens = 162286
+        mock_run.prompt_tokens = 128227
+        mock_run.completion_tokens = 34059
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert
+        trace = result["traces"][0]
+        assert "total_tokens" in trace
+        assert "prompt_tokens" in trace
+        assert "completion_tokens" in trace
+        assert trace["total_tokens"] == 162286
+        assert trace["prompt_tokens"] == 128227
+        assert trace["completion_tokens"] == 34059
+
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_handles_missing_tokens(self, mock_client_class):
+        """Test that missing token fields are handled gracefully."""
+        # Arrange
+        from datetime import datetime, timezone
+
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock non-LLM Run without token usage
+        mock_run = Mock()
+        mock_run.id = "chain_run_789"
+        mock_run.name = "LangGraph"
+        mock_run.start_time = datetime(2025, 12, 9, 10, 0, 0, tzinfo=timezone.utc)
+        mock_run.end_time = datetime(2025, 12, 9, 10, 5, 0, tzinfo=timezone.utc)
+        mock_run.status = "success"
+        mock_run.inputs = {}
+        mock_run.outputs = {}
+        mock_run.error = None
+        mock_run.run_type = "chain"
+        mock_run.child_runs = []
+        # No token fields (non-LLM run)
+        mock_run.total_tokens = None
+        mock_run.prompt_tokens = None
+        mock_run.completion_tokens = None
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert
+        trace = result["traces"][0]
+        # Token fields should be present but None for non-LLM runs
+        assert "total_tokens" in trace
+        assert "prompt_tokens" in trace
+        assert "completion_tokens" in trace
+        assert trace["total_tokens"] is None
+        assert trace["prompt_tokens"] is None
+        assert trace["completion_tokens"] is None
+
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_includes_cache_tokens_from_nested_fields(
+        self, mock_client_class
+    ):
+        """Test that cache token fields are extracted from nested input_token_details (LangSmith API structure)."""
+        # Arrange
+        from datetime import datetime, timezone
+
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock LLM Run with cache token usage in nested input_token_details
+        # Use spec to prevent Mock from creating cache_read_tokens/cache_creation_tokens automatically
+        mock_run = Mock(
+            spec=[
+                "id",
+                "name",
+                "start_time",
+                "end_time",
+                "status",
+                "inputs",
+                "outputs",
+                "error",
+                "run_type",
+                "child_runs",
+                "total_tokens",
+                "prompt_tokens",
+                "completion_tokens",
+            ]
+        )
+        mock_run.id = "cached_llm_run_999"
+        mock_run.name = "ChatGoogleGenerativeAI"
+        mock_run.start_time = datetime(2025, 12, 11, 10, 0, 0, tzinfo=timezone.utc)
+        mock_run.end_time = datetime(2025, 12, 11, 10, 2, 0, tzinfo=timezone.utc)
+        mock_run.status = "success"
+        mock_run.inputs = {"messages": []}
+        mock_run.error = None
+        mock_run.run_type = "llm"
+        mock_run.child_runs = []
+        # Standard token fields
+        mock_run.total_tokens = 50000
+        mock_run.prompt_tokens = 10000
+        mock_run.completion_tokens = 5000
+        # Cache token fields in nested LangChain message structure (actual LangSmith export format)
+        # These are nested under outputs["generations"][0][0]["message"]["kwargs"]["usage_metadata"]["input_token_details"]
+        mock_run.outputs = {
+            "generations": [
+                [
+                    {
+                        "message": {
+                            "kwargs": {
+                                "usage_metadata": {
+                                    "input_tokens": 10000,
+                                    "output_tokens": 5000,
+                                    "total_tokens": 50000,
+                                    "input_token_details": {
+                                        "cache_read": 35000,  # Tokens read from cache
+                                        "cache_creation": 0,  # Tokens written to cache
+                                    },
+                                }
+                            }
+                        }
+                    }
+                ]
+            ]
+        }
+        # Top-level cache fields not present (not in spec, so getattr will return None)
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert
+        trace = result["traces"][0]
+        assert "cache_read_tokens" in trace
+        assert "cache_creation_tokens" in trace
+        assert trace["cache_read_tokens"] == 35000
+        assert trace["cache_creation_tokens"] == 0
+        # Standard tokens should still be present
+        assert trace["total_tokens"] == 50000
+        assert trace["prompt_tokens"] == 10000
+        assert trace["completion_tokens"] == 5000
+
+    @patch("export_langsmith_traces.Client")
+    def test_format_trace_data_handles_missing_cache_tokens(self, mock_client_class):
+        """Test that missing cache token fields are handled gracefully (older LangSmith data)."""
+        # Arrange
+        from datetime import datetime, timezone
+
+        mock_client = Mock()
+        mock_client_class.return_value = mock_client
+
+        # Create mock LLM Run WITHOUT cache token fields (older export or non-cached run)
+        mock_run = Mock(
+            spec=[
+                "id",
+                "name",
+                "start_time",
+                "end_time",
+                "status",
+                "inputs",
+                "outputs",
+                "error",
+                "run_type",
+                "child_runs",
+                "total_tokens",
+                "prompt_tokens",
+                "completion_tokens",
+            ]
+        )
+        mock_run.id = "old_llm_run_888"
+        mock_run.name = "ChatGoogleGenerativeAI"
+        mock_run.start_time = datetime(2025, 12, 11, 10, 0, 0, tzinfo=timezone.utc)
+        mock_run.end_time = datetime(2025, 12, 11, 10, 2, 0, tzinfo=timezone.utc)
+        mock_run.status = "success"
+        mock_run.inputs = {"messages": []}
+        mock_run.outputs = {"generations": []}
+        mock_run.error = None
+        mock_run.run_type = "llm"
+        mock_run.child_runs = []
+        # Standard token fields present
+        mock_run.total_tokens = 15000
+        mock_run.prompt_tokens = 10000
+        mock_run.completion_tokens = 5000
+        # Cache token fields NOT present (not in spec, so getattr will return None via default)
+
+        exporter = LangSmithExporter(api_key="test_key")
+
+        # Act
+        result = exporter.format_trace_data([mock_run])
+
+        # Assert
+        trace = result["traces"][0]
+        # Cache token fields should be present but None when not available in source data
+        assert "cache_read_tokens" in trace
+        assert "cache_creation_tokens" in trace
+        assert trace["cache_read_tokens"] is None
+        assert trace["cache_creation_tokens"] is None
+        # Standard tokens should still be present
+        assert trace["total_tokens"] == 15000
+        assert trace["prompt_tokens"] == 10000
+        assert trace["completion_tokens"] == 5000
+
+    @patch("export_langsmith_traces.Client")
     def test_format_trace_data_missing_fields(self, mock_client_class):
         """Test safe handling of missing/null fields."""
         # Arrange
@@ -1005,13 +1230,13 @@ class TestHierarchicalDataFetching:
         # Mock the full run with children from read_run
         child1 = Mock()
         child1.id = "child-1"
-        child1.name = "generate_spec"
+        child1.name = "process_data"
         child1.run_type = "chain"
         child1.child_runs = []
 
         child2 = Mock()
         child2.id = "child-2"
-        child2.name = "xml_transformation"
+        child2.name = "transform_output"
         child2.run_type = "chain"
         child2.child_runs = []
 
@@ -1033,8 +1258,8 @@ class TestHierarchicalDataFetching:
         assert runs[0].id == "parent-123"
         assert runs[0].child_runs is not None
         assert len(runs[0].child_runs) == 2
-        assert runs[0].child_runs[0].name == "generate_spec"
-        assert runs[0].child_runs[1].name == "xml_transformation"
+        assert runs[0].child_runs[0].name == "process_data"
+        assert runs[0].child_runs[1].name == "transform_output"
 
         # Verify read_run was called with load_child_runs=True
         mock_client.read_run.assert_called_once_with("parent-123", load_child_runs=True)
@@ -1147,9 +1372,36 @@ class TestIntegration:
             mock_client_class.return_value = mock_client
 
             # Create mock runs with only essential attributes
-            mock_run = Mock(spec=["id", "name"])
+            mock_run = Mock(
+                spec=[
+                    "id",
+                    "name",
+                    "start_time",
+                    "end_time",
+                    "status",
+                    "inputs",
+                    "outputs",
+                    "error",
+                    "run_type",
+                    "child_runs",
+                    "total_tokens",
+                    "prompt_tokens",
+                    "completion_tokens",
+                ]
+            )
             mock_run.id = "run_123"
             mock_run.name = "test_run"
+            mock_run.start_time = None
+            mock_run.end_time = None
+            mock_run.status = "completed"
+            mock_run.inputs = {}
+            mock_run.outputs = {}
+            mock_run.error = None
+            mock_run.run_type = "chain"
+            mock_run.child_runs = []
+            mock_run.total_tokens = None
+            mock_run.prompt_tokens = None
+            mock_run.completion_tokens = None
 
             mock_client.list_runs.return_value = [mock_run]
 
@@ -1252,6 +1504,13 @@ class TestIntegration:
                 run.error = None
                 run.run_type = "chain"
                 run.child_runs = []
+                # Token fields (None for non-LLM runs)
+                run.total_tokens = None
+                run.prompt_tokens = None
+                run.completion_tokens = None
+                # Cache token fields (None for non-cached runs)
+                run.cache_read_tokens = None
+                run.cache_creation_tokens = None
                 all_runs.append(run)
 
             def mock_list_runs(*args, **kwargs):
@@ -1338,6 +1597,9 @@ class TestIntegration:
                     "error",
                     "run_type",
                     "child_runs",
+                    "total_tokens",
+                    "prompt_tokens",
+                    "completion_tokens",
                 ]
             )
             full_run1.id = "run_1"
@@ -1350,6 +1612,9 @@ class TestIntegration:
             full_run1.error = None
             full_run1.run_type = "chain"
             full_run1.child_runs = []  # Empty list to avoid nested Mock serialization
+            full_run1.total_tokens = None
+            full_run1.prompt_tokens = None
+            full_run1.completion_tokens = None
 
             full_run2 = Mock(
                 spec=[
@@ -1363,6 +1628,9 @@ class TestIntegration:
                     "error",
                     "run_type",
                     "child_runs",
+                    "total_tokens",
+                    "prompt_tokens",
+                    "completion_tokens",
                 ]
             )
             full_run2.id = "run_2"
@@ -1375,6 +1643,9 @@ class TestIntegration:
             full_run2.error = None
             full_run2.run_type = "chain"
             full_run2.child_runs = []
+            full_run2.total_tokens = None
+            full_run2.prompt_tokens = None
+            full_run2.completion_tokens = None
 
             # Mock behaviors
             mock_client.list_runs.return_value = iter([flat_run1, flat_run2])

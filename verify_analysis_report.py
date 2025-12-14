@@ -32,6 +32,16 @@ from analyze_traces import (
     BottleneckAnalysis,
     ParallelExecutionEvidence,
 )
+from analyze_cost import (
+    analyze_costs,
+    PricingConfig,
+    EXAMPLE_PRICING_CONFIGS,
+    CostAnalysisResults,
+)
+from analyze_failures import (
+    analyze_failures,
+    FailureAnalysisResults,
+)
 
 
 def print_header(title: str) -> None:
@@ -265,11 +275,11 @@ def verify_parallel_execution(
 
 
 def generate_summary_report(
-        dataset: TraceDataset,
-        latency_dist: LatencyDistribution,
-        bottleneck_analysis: BottleneckAnalysis,
-        parallel_evidence: ParallelExecutionEvidence,
-    ) -> None:
+    dataset: TraceDataset,
+    latency_dist: LatencyDistribution,
+    bottleneck_analysis: BottleneckAnalysis,
+    parallel_evidence: ParallelExecutionEvidence,
+) -> None:
     """Generate final summary with all key findings."""
     print_header("ANALYSIS SUMMARY")
 
@@ -305,6 +315,156 @@ def generate_summary_report(
     )
 
 
+def verify_cost_analysis(
+    dataset: TraceDataset,
+    pricing_config: PricingConfig,
+    expected: Optional[Dict[str, Any]] = None,
+) -> CostAnalysisResults:
+    """
+    Verify Phase 3B cost calculations.
+
+    Displays:
+    - Cost per workflow (avg, median, range)
+    - Top 3 cost drivers
+    - Scaling projections (10x, 100x, 1000x)
+    - Cache effectiveness if available
+    """
+    print_header("PHASE 3B: COST ANALYSIS VERIFICATION")
+
+    print(f"\nPricing Model: {pricing_config.model_name}")
+    print(f"  Input tokens: ${pricing_config.input_tokens_per_1k}/1K tokens")
+    print(f"  Output tokens: ${pricing_config.output_tokens_per_1k}/1K tokens")
+    if pricing_config.cache_read_per_1k:
+        print(f"  Cache read tokens: ${pricing_config.cache_read_per_1k}/1K tokens")
+
+    # Run cost analysis
+    results = analyze_costs(dataset.workflows, pricing_config)
+
+    print_section("Workflow Cost Statistics")
+    print(f"  Total workflows analyzed: {results.total_workflows_analyzed}")
+    print(f"  Average cost per workflow: ${results.avg_cost_per_workflow:.4f}")
+    print(f"  Median cost per workflow: ${results.median_cost_per_workflow:.4f}")
+    print(f"  Cost range: ${results.min_cost:.4f} - ${results.max_cost:.4f}")
+
+    if expected and "cost_analysis" in expected:
+        exp_cost = expected["cost_analysis"]
+        check_value(
+            "avg_cost_per_workflow",
+            results.avg_cost_per_workflow,
+            exp_cost.get("avg_cost_per_workflow"),
+        )
+
+    print_section("Cost Drivers (Top 3 Nodes)")
+    for i, node in enumerate(results.node_summaries[:3], 1):
+        print(
+            f"  {i}. {node.node_name}: ${node.total_cost:.4f} ({node.percent_of_total_cost:.1f}%)"
+        )
+        print(
+            f"     Executions: {node.execution_count}, Avg: ${node.avg_cost_per_execution:.4f}"
+        )
+
+    print_section("Scaling Projections")
+    for scale_label in ["1x", "10x", "100x", "1000x"]:
+        if scale_label in results.scaling_projections:
+            proj = results.scaling_projections[scale_label]
+            print(
+                f"  {scale_label}: {proj.workflow_count} workflows → ${proj.total_cost:.2f}"
+            )
+            if proj.cost_per_month_30days:
+                print(f"       Monthly (30 days): ${proj.cost_per_month_30days:.2f}")
+
+    if results.cache_effectiveness_percent:
+        print_section("Cache Effectiveness")
+        print(f"  Cache hit rate: {results.cache_effectiveness_percent:.1f}%")
+        if results.cache_savings_dollars:
+            print(f"  Cost savings: ${results.cache_savings_dollars:.2f}")
+
+    if results.data_quality_notes:
+        print_section("Data Quality Notes")
+        for note in results.data_quality_notes:
+            print(f"  - {note}")
+
+    return results
+
+
+def verify_failure_analysis(
+    dataset: TraceDataset, expected: Optional[Dict[str, Any]] = None
+) -> FailureAnalysisResults:
+    """
+    Verify Phase 3C failure calculations.
+
+    Displays:
+    - Overall success rate
+    - Top 5 nodes by failure rate
+    - Retry analysis (sequences detected, success rate)
+    - Validator effectiveness
+    """
+    print_header("PHASE 3C: FAILURE PATTERN ANALYSIS VERIFICATION")
+
+    # Run failure analysis
+    results = analyze_failures(dataset.workflows)
+
+    print_section("Overall Success/Failure Metrics")
+    print(f"  Total workflows: {results.total_workflows}")
+    print(f"  Successful: {results.successful_workflows}")
+    print(f"  Failed: {results.failed_workflows}")
+    print(f"  Success rate: {results.overall_success_rate_percent:.1f}%")
+
+    if expected and "failure_analysis" in expected:
+        exp_fail = expected["failure_analysis"]
+        check_value(
+            "success_rate",
+            results.overall_success_rate_percent,
+            exp_fail.get("success_rate"),
+        )
+
+    print_section("Node Failure Rates (Top 5)")
+    for i, node in enumerate(results.node_failure_stats[:5], 1):
+        print(f"  {i}. {node.node_name}: {node.failure_rate_percent:.1f}% failure rate")
+        print(f"     {node.failure_count}/{node.total_executions} executions failed")
+        if node.retry_sequences_detected > 0:
+            print(f"     Retry sequences detected: {node.retry_sequences_detected}")
+
+    print_section("Error Distribution")
+    if results.error_type_distribution:
+        sorted_errors = sorted(
+            results.error_type_distribution.items(),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        for error_type, count in sorted_errors[:5]:
+            print(f"  - {error_type}: {count} occurrences")
+    else:
+        print("  No errors detected")
+
+    print_section("Retry Analysis")
+    print(f"  Total retry sequences: {results.total_retry_sequences}")
+    if results.retry_success_rate_percent is not None:
+        print(f"  Retry success rate: {results.retry_success_rate_percent:.1f}%")
+    if results.avg_cost_of_retries is not None:
+        print(f"  Avg cost of retries: ${results.avg_cost_of_retries:.4f}")
+
+    if results.validator_analyses:
+        print_section("Validator Effectiveness")
+        for validator in results.validator_analyses:
+            print(f"  {validator.validator_name}:")
+            print(f"    Executions: {validator.total_executions}")
+            print(f"    Pass rate: {validator.pass_rate_percent:.1f}%")
+            print(f"    Necessary: {'Yes' if validator.is_necessary else 'No'}")
+
+    if results.redundant_validators:
+        print(
+            f"\n  Potentially redundant validators: {', '.join(results.redundant_validators)}"
+        )
+
+    if results.quality_risks_at_scale:
+        print_section("Quality Risks at Scale")
+        for risk in results.quality_risks_at_scale:
+            print(f"  - {risk}")
+
+    return results
+
+
 def main() -> int:
     """Main verification script."""
     parser = argparse.ArgumentParser(
@@ -317,6 +477,18 @@ def main() -> int:
         "--expected-values",
         type=str,
         help="Optional JSON file with expected values for verification",
+    )
+    parser.add_argument(
+        "--phases",
+        type=str,
+        default="3a",
+        help="Phases to verify: 3a, 3b, 3c, or all (default: 3a)",
+    )
+    parser.add_argument(
+        "--pricing-model",
+        type=str,
+        default="gemini_1.5_pro",
+        help="Pricing model for cost analysis (default: gemini_1.5_pro)",
     )
 
     args = parser.parse_args()
@@ -341,14 +513,36 @@ def main() -> int:
     print(f"\nLoading data from: {input_path}")
     dataset = load_from_json(str(input_path))
 
-    # Run all verifications
-    verify_dataset_info(dataset, expected)
-    latency_dist = verify_latency_distribution(dataset, expected)
-    bottleneck_analysis = verify_bottleneck_analysis(dataset, expected)
-    parallel_evidence = verify_parallel_execution(dataset, expected)
-    generate_summary_report(
-        dataset, latency_dist, bottleneck_analysis, parallel_evidence
-    )
+    phases = args.phases.lower()
+    run_3a = phases in ["3a", "all"]
+    run_3b = phases in ["3b", "all"]
+    run_3c = phases in ["3c", "all"]
+
+    # Run Phase 3A verifications
+    if run_3a:
+        verify_dataset_info(dataset, expected)
+        latency_dist = verify_latency_distribution(dataset, expected)
+        bottleneck_analysis = verify_bottleneck_analysis(dataset, expected)
+        parallel_evidence = verify_parallel_execution(dataset, expected)
+        generate_summary_report(
+            dataset, latency_dist, bottleneck_analysis, parallel_evidence
+        )
+
+    # Run Phase 3B verification (Cost Analysis)
+    if run_3b:
+        if args.pricing_model in EXAMPLE_PRICING_CONFIGS:
+            pricing_config = EXAMPLE_PRICING_CONFIGS[args.pricing_model]
+        else:
+            print(
+                f"\nWarning: Unknown pricing model '{args.pricing_model}', using gemini_1.5_pro"
+            )
+            pricing_config = EXAMPLE_PRICING_CONFIGS["gemini_1.5_pro"]
+
+        verify_cost_analysis(dataset, pricing_config, expected)
+
+    # Run Phase 3C verification (Failure Analysis)
+    if run_3c:
+        verify_failure_analysis(dataset, expected)
 
     # Final status
     print_header("VERIFICATION COMPLETE")

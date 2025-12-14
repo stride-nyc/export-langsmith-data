@@ -390,6 +390,87 @@ class LangSmithExporter:
             for child in child_runs:
                 formatted_children.append(self._format_single_run(child))
 
+        # Extract cache token data with fallback logic
+        # Try multiple locations: top-level fields, then nested in outputs/inputs
+        cache_read_tokens = getattr(run, "cache_read_tokens", None)
+        cache_creation_tokens = getattr(run, "cache_creation_tokens", None)
+
+        # Fallback 1: Check LangChain message format (primary location in exports)
+        # outputs["generations"][0][0]["message"]["kwargs"]["usage_metadata"]["input_token_details"]
+        if cache_read_tokens is None or cache_creation_tokens is None:
+            outputs = getattr(run, "outputs", {})
+            if isinstance(outputs, dict):
+                generations = outputs.get("generations", [[]])
+                if generations and len(generations) > 0 and len(generations[0]) > 0:
+                    message = generations[0][0]
+                    if isinstance(message, dict):
+                        message_obj = message.get("message", {})
+                        if isinstance(message_obj, dict):
+                            kwargs = message_obj.get("kwargs", {})
+                            if isinstance(kwargs, dict):
+                                usage_metadata = kwargs.get("usage_metadata", {})
+                                if isinstance(usage_metadata, dict):
+                                    input_token_details = usage_metadata.get(
+                                        "input_token_details", {}
+                                    )
+                                    if isinstance(input_token_details, dict):
+                                        if cache_read_tokens is None:
+                                            cache_read_tokens = input_token_details.get(
+                                                "cache_read"
+                                            )
+                                        if cache_creation_tokens is None:
+                                            cache_creation_tokens = (
+                                                input_token_details.get(
+                                                    "cache_creation"
+                                                )
+                                            )
+                                            if cache_creation_tokens is None:
+                                                cache_creation_tokens = (
+                                                    input_token_details.get(
+                                                        "cache_creation_input_tokens"
+                                                    )
+                                                )
+
+        # Fallback 2: Check outputs["usage_metadata"]["input_token_details"]
+        if cache_read_tokens is None or cache_creation_tokens is None:
+            outputs = getattr(run, "outputs", {})
+            if isinstance(outputs, dict):
+                usage_metadata = outputs.get("usage_metadata", {})
+                if isinstance(usage_metadata, dict):
+                    input_token_details = usage_metadata.get("input_token_details", {})
+                    if isinstance(input_token_details, dict):
+                        if cache_read_tokens is None:
+                            cache_read_tokens = input_token_details.get("cache_read")
+                        if cache_creation_tokens is None:
+                            # Try both possible field names (use explicit None check to preserve 0 values)
+                            cache_creation_tokens = input_token_details.get(
+                                "cache_creation"
+                            )
+                            if cache_creation_tokens is None:
+                                cache_creation_tokens = input_token_details.get(
+                                    "cache_creation_input_tokens"
+                                )
+
+        # Fallback 3: Check inputs["usage_metadata"]["input_token_details"] (less common)
+        if cache_read_tokens is None or cache_creation_tokens is None:
+            inputs = getattr(run, "inputs", {})
+            if isinstance(inputs, dict):
+                usage_metadata = inputs.get("usage_metadata", {})
+                if isinstance(usage_metadata, dict):
+                    input_token_details = usage_metadata.get("input_token_details", {})
+                    if isinstance(input_token_details, dict):
+                        if cache_read_tokens is None:
+                            cache_read_tokens = input_token_details.get("cache_read")
+                        if cache_creation_tokens is None:
+                            # Try both possible field names (use explicit None check to preserve 0 values)
+                            cache_creation_tokens = input_token_details.get(
+                                "cache_creation"
+                            )
+                            if cache_creation_tokens is None:
+                                cache_creation_tokens = input_token_details.get(
+                                    "cache_creation_input_tokens"
+                                )
+
         trace = {
             "id": str(getattr(run, "id", None)) if hasattr(run, "id") else None,
             "name": getattr(run, "name", None),
@@ -410,6 +491,11 @@ class LangSmithExporter:
             "error": getattr(run, "error", None),
             "run_type": getattr(run, "run_type", None),
             "child_runs": formatted_children,
+            "total_tokens": getattr(run, "total_tokens", None),
+            "prompt_tokens": getattr(run, "prompt_tokens", None),
+            "completion_tokens": getattr(run, "completion_tokens", None),
+            "cache_read_tokens": cache_read_tokens,
+            "cache_creation_tokens": cache_creation_tokens,
         }
         return trace
 
