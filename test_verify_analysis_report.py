@@ -136,9 +136,11 @@ class TestVerifyLatencyDistribution:
             max_minutes=30.0,
             mean_minutes=12.0,
             std_dev_minutes=5.0,
-            outliers_above_23min=[],
-            outliers_below_7min=[],
-            percent_within_7_23_claim=80.0,
+            min_threshold=7.0,
+            max_threshold=40.0,
+            outliers_above_max=[],
+            outliers_below_min=[],
+            percent_within_range=80.0,
         )
         mock_analyze.return_value = mock_latency_dist
 
@@ -147,7 +149,7 @@ class TestVerifyLatencyDistribution:
         assert result == mock_latency_dist
         captured = capsys.readouterr()
         assert "p50 (median):    10.00 minutes" in captured.out
-        assert "Within 7-23 min: 80.0%" in captured.out
+        assert "Within 7.0-40.0 min: 80.0%" in captured.out
 
     @patch("verify_analysis_report.analyze_latency_distribution")
     def test_verify_latency_distribution_with_expected(
@@ -162,9 +164,11 @@ class TestVerifyLatencyDistribution:
             max_minutes=30.0,
             mean_minutes=12.0,
             std_dev_minutes=5.0,
-            outliers_above_23min=[],
-            outliers_below_7min=[],
-            percent_within_7_23_claim=80.0,
+            min_threshold=7.0,
+            max_threshold=40.0,
+            outliers_above_max=[],
+            outliers_below_min=[],
+            percent_within_range=80.0,
         )
         mock_analyze.return_value = mock_latency_dist
 
@@ -316,9 +320,11 @@ class TestGenerateSummaryReport:
             max_minutes=30.0,
             mean_minutes=12.0,
             std_dev_minutes=5.0,
-            outliers_above_23min=[],
-            outliers_below_7min=[],
-            percent_within_7_23_claim=80.0,
+            min_threshold=7.0,
+            max_threshold=40.0,
+            outliers_above_max=[],
+            outliers_below_min=[],
+            percent_within_range=80.0,
         )
 
         node_perf = NodePerformance(
@@ -396,9 +402,11 @@ class TestMain:
             max_minutes=30.0,
             mean_minutes=12.0,
             std_dev_minutes=5.0,
-            outliers_above_23min=[],
-            outliers_below_7min=[],
-            percent_within_7_23_claim=80.0,
+            min_threshold=7.0,
+            max_threshold=40.0,
+            outliers_above_max=[],
+            outliers_below_min=[],
+            percent_within_range=80.0,
         )
         mock_verify_latency.return_value = mock_latency
 
@@ -484,9 +492,11 @@ class TestMain:
             max_minutes=30.0,
             mean_minutes=12.0,
             std_dev_minutes=5.0,
-            outliers_above_23min=[],
-            outliers_below_7min=[],
-            percent_within_7_23_claim=80.0,
+            min_threshold=7.0,
+            max_threshold=40.0,
+            outliers_above_max=[],
+            outliers_below_min=[],
+            percent_within_range=80.0,
         )
         mock_verify_latency.return_value = mock_latency
 

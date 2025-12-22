@@ -373,16 +373,18 @@ class TestLatencyDistribution:
             max_minutes=27.0,
             mean_minutes=16.5,
             std_dev_minutes=5.2,
-            outliers_above_23min=["trace-1", "trace-2"],
-            outliers_below_7min=[],
-            percent_within_7_23_claim=85.0,
+            min_threshold=7.0,
+            max_threshold=23.0,
+            outliers_above_max=["trace-1", "trace-2"],
+            outliers_below_min=[],
+            percent_within_range=85.0,
         )
 
         # Assert
         assert dist.p50_minutes == 15.0
         assert dist.p95_minutes == 22.0
-        assert len(dist.outliers_above_23min) == 2
-        assert dist.percent_within_7_23_claim == 85.0
+        assert len(dist.outliers_above_max) == 2
+        assert dist.percent_within_range == 85.0
 
     def test_analyze_latency_distribution_basic(self):
         """Test basic latency distribution analysis with valid workflows."""
@@ -420,15 +422,17 @@ class TestLatencyDistribution:
             workflow = Workflow(root_trace=root, nodes={}, all_traces=[root])
             workflows.append(workflow)
 
-        # Act
-        result = analyze_latency_distribution(workflows)
+        # Act - Test with explicit thresholds (backward compatibility)
+        result = analyze_latency_distribution(
+            workflows, min_threshold=7.0, max_threshold=23.0
+        )
 
         # Assert
         assert result.p50_minutes == 15.0  # Median of [5, 10, 15, 20, 25]
         assert result.min_minutes == 5.0
         assert result.max_minutes == 25.0
-        assert len(result.outliers_below_7min) == 1  # 5 min trace
-        assert len(result.outliers_above_23min) == 1  # 25 min trace
+        assert len(result.outliers_below_min) == 1  # 5 min trace
+        assert len(result.outliers_above_max) == 1  # 25 min trace
 
     def test_analyze_latency_distribution_filters_zero_duration(self):
         """Test that zero-duration workflows are filtered out."""
@@ -1147,9 +1151,11 @@ class TestCSVExport:
             max_minutes=27.0,
             mean_minutes=16.5,
             std_dev_minutes=5.2,
-            outliers_above_23min=["trace-1", "trace-2"],
-            outliers_below_7min=["trace-3"],
-            percent_within_7_23_claim=85.0,
+            min_threshold=7.0,
+            max_threshold=23.0,
+            outliers_above_max=["trace-1", "trace-2"],
+            outliers_below_min=["trace-3"],
+            percent_within_range=85.0,
         )
 
         # Act
@@ -1161,7 +1167,8 @@ class TestCSVExport:
         assert "p95,22.0" in csv_output
         assert "p99,25.0" in csv_output
         assert "mean,16.5" in csv_output
-        assert "percent_within_7_23_claim,85.0" in csv_output
+        assert "percent_within_range,85.0" in csv_output
+        assert "7.0-23.0 min range" in csv_output  # Verify dynamic threshold text
 
     def test_bottleneck_analysis_to_csv(self):
         """Test exporting BottleneckAnalysis to CSV format."""
@@ -1245,9 +1252,11 @@ class TestCSVExport:
             max_minutes=27.0,
             mean_minutes=16.5,
             std_dev_minutes=5.2,
-            outliers_above_23min=[],
-            outliers_below_7min=[],
-            percent_within_7_23_claim=90.0,
+            min_threshold=7.0,
+            max_threshold=40.0,
+            outliers_above_max=[],
+            outliers_below_min=[],
+            percent_within_range=90.0,
         )
 
         # Act

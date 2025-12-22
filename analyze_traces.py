@@ -284,9 +284,11 @@ class LatencyDistribution:
         max_minutes: Maximum workflow duration in minutes
         mean_minutes: Average workflow duration in minutes
         std_dev_minutes: Standard deviation of workflow durations
-        outliers_above_23min: List of workflow IDs above 23 minutes
-        outliers_below_7min: List of workflow IDs below 7 minutes
-        percent_within_7_23_claim: Percentage of workflows within 7-23 min range
+        min_threshold: Minimum duration threshold in minutes
+        max_threshold: Maximum duration threshold in minutes
+        outliers_above_max: List of workflow IDs above maximum threshold
+        outliers_below_min: List of workflow IDs below minimum threshold
+        percent_within_range: Percentage of workflows within threshold range
     """
 
     p50_minutes: float
@@ -296,9 +298,11 @@ class LatencyDistribution:
     max_minutes: float
     mean_minutes: float
     std_dev_minutes: float
-    outliers_above_23min: List[str]
-    outliers_below_7min: List[str]
-    percent_within_7_23_claim: float
+    min_threshold: float
+    max_threshold: float
+    outliers_above_max: List[str]
+    outliers_below_min: List[str]
+    percent_within_range: float
 
     def to_csv(self) -> str:
         """
@@ -316,26 +320,32 @@ class LatencyDistribution:
         lines.append(f"mean,{self.mean_minutes},,average duration")
         lines.append(f"std_dev,{self.std_dev_minutes},,standard deviation")
         lines.append(
-            f"outliers_above_23min,,{len(self.outliers_above_23min)},workflows > 23 minutes"
+            f"outliers_above_max,,{len(self.outliers_above_max)},workflows > {self.max_threshold} minutes"
         )
         lines.append(
-            f"outliers_below_7min,,{len(self.outliers_below_7min)},workflows < 7 minutes"
+            f"outliers_below_min,,{len(self.outliers_below_min)},workflows < {self.min_threshold} minutes"
         )
         lines.append(
-            f"percent_within_7_23_claim,{self.percent_within_7_23_claim},,% within claimed 7-23 min range"
+            f"percent_within_range,{self.percent_within_range},,% within {self.min_threshold}-{self.max_threshold} min range"
         )
         return "\n".join(lines)
 
 
-def analyze_latency_distribution(workflows: List[Workflow]) -> LatencyDistribution:
+def analyze_latency_distribution(
+    workflows: List[Workflow],
+    min_threshold: float = 7.0,
+    max_threshold: float = 40.0,
+) -> LatencyDistribution:
     """
     Analyze latency distribution across workflows.
 
-    Calculates percentiles, identifies outliers, and validates the
-    claimed "7-23 minutes" workflow execution timeframe.
+    Calculates percentiles, identifies outliers, and validates workflow
+    execution times against configurable duration thresholds.
 
     Args:
         workflows: List of Workflow objects to analyze
+        min_threshold: Minimum duration threshold in minutes (default: 7.0)
+        max_threshold: Maximum duration threshold in minutes (default: 40.0)
 
     Returns:
         LatencyDistribution with calculated metrics
@@ -366,18 +376,18 @@ def analyze_latency_distribution(workflows: List[Workflow]) -> LatencyDistributi
     # Identify outliers
     outliers_above = []
     outliers_below = []
-    within_claim = 0
+    within_range = 0
 
     for workflow, duration_min in zip(valid_workflows, durations_minutes):
-        if duration_min > 23.0:
+        if duration_min > max_threshold:
             outliers_above.append(workflow.root_trace.id)
-        elif duration_min < 7.0:
+        elif duration_min < min_threshold:
             outliers_below.append(workflow.root_trace.id)
         else:
-            within_claim += 1
+            within_range += 1
 
-    # Calculate percentage within claimed range
-    percent_within = (within_claim / len(valid_workflows)) * 100.0
+    # Calculate percentage within threshold range
+    percent_within = (within_range / len(valid_workflows)) * 100.0
 
     return LatencyDistribution(
         p50_minutes=p50,
@@ -387,9 +397,11 @@ def analyze_latency_distribution(workflows: List[Workflow]) -> LatencyDistributi
         max_minutes=max_val,
         mean_minutes=mean_val,
         std_dev_minutes=std_dev,
-        outliers_above_23min=outliers_above,
-        outliers_below_7min=outliers_below,
-        percent_within_7_23_claim=percent_within,
+        min_threshold=min_threshold,
+        max_threshold=max_threshold,
+        outliers_above_max=outliers_above,
+        outliers_below_min=outliers_below,
+        percent_within_range=percent_within,
     )
 
 

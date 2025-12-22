@@ -100,12 +100,17 @@ def verify_dataset_info(
 
 
 def verify_latency_distribution(
-    dataset: TraceDataset, expected: Optional[Dict[str, Any]] = None
+    dataset: TraceDataset,
+    expected: Optional[Dict[str, Any]] = None,
+    min_threshold: float = 7.0,
+    max_threshold: float = 40.0,
 ) -> LatencyDistribution:
     """Verify all latency distribution calculations."""
     print_header("LATENCY DISTRIBUTION VERIFICATION")
 
-    latency_dist = analyze_latency_distribution(dataset.workflows)
+    latency_dist = analyze_latency_distribution(
+        dataset.workflows, min_threshold=min_threshold, max_threshold=max_threshold
+    )
 
     # Percentile Metrics
     print_section("Percentile Metrics")
@@ -131,31 +136,35 @@ def verify_latency_distribution(
     # Outlier Analysis
     print_section("Outlier Analysis")
     total_workflows = len(dataset.workflows)
-    below_7_count = len(latency_dist.outliers_below_7min)
-    above_23_count = len(latency_dist.outliers_above_23min)
-    within_7_23 = latency_dist.percent_within_7_23_claim
+    below_min_count = len(latency_dist.outliers_below_min)
+    above_max_count = len(latency_dist.outliers_above_max)
+    within_range = latency_dist.percent_within_range
 
     print(
-        f"Below 7 min:     {below_7_count} workflows ({below_7_count/total_workflows*100:.1f}%)"
+        f"Below {min_threshold} min:     {below_min_count} workflows ({below_min_count/total_workflows*100:.1f}%)"
     )
-    print(f"Within 7-23 min: {within_7_23:.1f}%")
+    print(f"Within {min_threshold}-{max_threshold} min: {within_range:.1f}%")
     print(
-        f"Above 23 min:    {above_23_count} workflows ({above_23_count/total_workflows*100:.1f}%)"
+        f"Above {max_threshold} min:    {above_max_count} workflows ({above_max_count/total_workflows*100:.1f}%)"
     )
 
     if expected and "outliers" in expected:
         print("\nExpected Values Verification:")
         exp = expected["outliers"]
         check_value(
-            "% below 7 min",
-            exp.get("below_7_pct", 0),
-            below_7_count / total_workflows * 100,
+            f"% below {min_threshold} min",
+            exp.get("below_min_pct", 0),
+            below_min_count / total_workflows * 100,
         )
-        check_value("% within 7-23 min", exp.get("within_7_23_pct", 0), within_7_23)
         check_value(
-            "% above 23 min",
-            exp.get("above_23_pct", 0),
-            above_23_count / total_workflows * 100,
+            f"% within {min_threshold}-{max_threshold} min",
+            exp.get("within_range_pct", 0),
+            within_range,
+        )
+        check_value(
+            f"% above {max_threshold} min",
+            exp.get("above_max_pct", 0),
+            above_max_count / total_workflows * 100,
         )
 
     return latency_dist
@@ -295,9 +304,15 @@ def generate_summary_report(
     )
 
     print("\nOutliers:")
-    print(f"  Below 7 min: {len(latency_dist.outliers_below_7min)/total*100:.1f}%")
-    print(f"  Within 7-23 min: {latency_dist.percent_within_7_23_claim:.1f}%")
-    print(f"  Above 23 min: {len(latency_dist.outliers_above_23min)/total*100:.1f}%")
+    print(
+        f"  Below {latency_dist.min_threshold} min: {len(latency_dist.outliers_below_min)/total*100:.1f}%"
+    )
+    print(
+        f"  Within {latency_dist.min_threshold}-{latency_dist.max_threshold} min: {latency_dist.percent_within_range:.1f}%"
+    )
+    print(
+        f"  Above {latency_dist.max_threshold} min: {len(latency_dist.outliers_above_max)/total*100:.1f}%"
+    )
 
     print("\nBottlenecks:")
     print(f"  Primary: {bottleneck_analysis.primary_bottleneck}")
@@ -490,6 +505,18 @@ def main() -> int:
         default="gemini_1.5_pro",
         help="Pricing model for cost analysis (default: gemini_1.5_pro)",
     )
+    parser.add_argument(
+        "--min-duration",
+        type=float,
+        default=7.0,
+        help="Minimum duration threshold in minutes (default: 7.0)",
+    )
+    parser.add_argument(
+        "--max-duration",
+        type=float,
+        default=40.0,
+        help="Maximum duration threshold in minutes (default: 40.0)",
+    )
 
     args = parser.parse_args()
 
@@ -521,7 +548,9 @@ def main() -> int:
     # Run Phase 3A verifications
     if run_3a:
         verify_dataset_info(dataset, expected)
-        latency_dist = verify_latency_distribution(dataset, expected)
+        latency_dist = verify_latency_distribution(
+            dataset, expected, args.min_duration, args.max_duration
+        )
         bottleneck_analysis = verify_bottleneck_analysis(dataset, expected)
         parallel_evidence = verify_parallel_execution(dataset, expected)
         generate_summary_report(
